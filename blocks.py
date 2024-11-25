@@ -385,11 +385,9 @@ class BlockDescriptor:
                         self.n_byref_ptrs = (self.layout >> 4) & 0xf
                         self.n_weak_ptrs = self.layout & 0xf
                     else:
-                        # XXX this is common with non-pointer types
-                        raise NotImplementedError("BLOCK_HAS_EXTENDED_LAYOUT set but layout > 0x1000, layout bytecode not supported yet")
+                        print(f"Warning: {self.address:x}: BLOCK_HAS_EXTENDED_LAYOUT set and layout > 0x1000, layout bytecode not supported yet", file=sys.stderr)
                 else:
-                    # XXX
-                    raise NotImplementedError("BLOCK_HAS_EXTENDED_LAYOUT not set, legacy layout not supported yet")
+                    print(f"Warning: {self.address:x}: BLOCK_HAS_EXTENDED_LAYOUT unset, non-extended layout not supported yet", file=sys.stderr)
 
     @property
     def imported_variables_size(self):
