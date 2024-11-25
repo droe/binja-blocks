@@ -601,6 +601,8 @@ def annotate_stack_block_literal(bv, block_literal_insn):
                         assert isinstance(insn.src, binja.HighLevelILConst)
                         byref_size = insn.src.constant
 
+                print(f"Block byref at {byref_insn.address:x} flags {byref_flags:08x} size {byref_size:#x}")
+
                 if (byref_flags & BLOCK_BYREF_HAS_COPY_DISPOSE) != 0:
                     byref_struct.append(_get_libclosure_type(bv, "BlockByrefKeepFunction"), "byref_keep")
                     byref_struct.append(_get_libclosure_type(bv, "BlockByrefDestroyFunction"), "byref_destroy")
