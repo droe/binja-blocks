@@ -38,7 +38,6 @@ Features:
 
 Planned improvements, PRs welcome:
 
--   Propagate byref types to block literal types
 -   Annotate block imported variables for extended layout with bytecode
 -   Annotate block imported variables for non-extended layout
 -   Annotate stack byref fields for extended layout with bytecode

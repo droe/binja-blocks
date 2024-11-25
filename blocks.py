@@ -279,7 +279,7 @@ class BlockLiteral:
         struct.append(self._bv.parse_type_string(f"volatile uint32_t flags")[0], "flags")
         struct.append(self._bv.parse_type_string(f"uint32_t reserved")[0], "reserved")
         struct.append(_get_libclosure_type(self._bv, "BlockInvokeFunction"), "invoke")
-        struct.append(binja.Type.pointer(self._bv.arch, _get_libclosure_type(self._bv, "Block_descriptor_1")), "descriptor")
+        struct.append(binja.Type.pointer(self._bv.arch, _get_libclosure_type(self._bv, "Block_descriptor_1")), "descriptor") # placeholder
         if bd.imported_variables_size > 0:
             if bd.layout != 0 and bd.layout < 0x1000:
                 for i in range(bd.n_strong_ptrs):
@@ -534,12 +534,12 @@ def annotate_stack_block_literal(bv, block_literal_insn):
                         print(f"{where}: Skipping assignment right-hand-side for {insn.src!r}, fix plugin", file=sys.stderr)
                         continue
                     if insn.dest.member_index >= 5 + bd.n_strong_ptrs and insn.dest.member_index < 5 + bd.n_strong_ptrs + bd.n_byref_ptrs:
-                        byref_srcs.append(insn_src)
+                        byref_srcs.append((insn_src, insn.dest.member_index))
             except NotImplementedError as e:
                 print(f"{where}: {e}", file=sys.stderr)
 
             assert bd.n_byref_ptrs == len(byref_srcs)
-            for byref_src in byref_srcs:
+            for byref_src, byref_member_index in byref_srcs:
                 if byref_src is None:
                     continue
                 if isinstance(byref_src.src, binja.HighLevelILVar):
@@ -649,7 +649,12 @@ def annotate_stack_block_literal(bv, block_literal_insn):
 
                 byref_insn_var.type = byref_struct_type
 
-                # XXX propagate byref type to block literal type (need byref's block literal struct member index)
+                # propagate byref type to block literal type
+                byref_member_name = bl.struct_builder.members[byref_member_index].name
+                assert byref_member_name.startswith("byref_ptr_")
+                bl.struct_builder.replace(byref_member_index, binja.Type.pointer(bv.arch, byref_struct_type), byref_member_name)
+                bv.define_type(binja.Type.generate_auto_type_id(_TYPE_ID_SOURCE, bl.struct_name), bl.struct_name, bl.struct_builder)
+                bl.struct_type = bv.parse_type_string(bl.struct_type_name)[0]
 
                 # XXX annotate functions (hard with use of temporary 128-bit reg)
 
