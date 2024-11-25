@@ -186,6 +186,8 @@ def _define_ns_concrete_block_imports(bv):
     class_type = _get_objc_type(bv, "Class")
     for sym_name in ("__NSConcreteGlobalBlock", "__NSConcreteStackBlock"):
         ext_sym = shinobi.get_symbol_of_type(bv, sym_name, binja.SymbolType.ExternalSymbol)
+        if ext_sym is None:
+            return
         data_var = bv.get_data_var_at(ext_sym.address)
         if data_var is None:
             bv.define_data_var(ext_sym.address, class_type)
@@ -475,6 +477,9 @@ def annotate_global_block_literal(bv, block_literal_addr):
         print(f"{where}: Data var has value {data_var_value} of type {type(data_var_value).__name__}, expected int, fix plugin", file=sys.stderr)
         return
     ext_sym = shinobi.get_symbol_of_type(bv, "__NSConcreteGlobalBlock", binja.SymbolType.ExternalSymbol)
+    if ext_sym is None:
+        print(f"__NSConcreteGlobalBlock not found", file=sys.stderr)
+        return
     if not data_var_value == ext_sym.address:
         print(f"{where}: Data var has value {data_var_value:x} instead of {ext_sym.address:x} __NSConcreteGlobalBlock", file=sys.stderr)
         return
@@ -668,7 +673,10 @@ def annotate_stack_block_literal(bv, block_literal_insn):
 
 def annotate_all_global_blocks(bv, set_progress=None):
     ext_sym = shinobi.get_symbol_of_type(bv, "__NSConcreteGlobalBlock", binja.SymbolType.ExternalSymbol)
-    assert ext_sym is not None and ext_sym.address is not None and ext_sym.address != 0
+    if ext_sym is None:
+        print("__NSConcreteGlobalBlock not found, target does not appear to contain any global blocks")
+        return
+    assert ext_sym.address is not None and ext_sym.address != 0
     for addr in bv.get_data_refs(ext_sym.address):
         if set_progress is not None:
             set_progress(f"{addr:x}")
@@ -677,12 +685,17 @@ def annotate_all_global_blocks(bv, set_progress=None):
 
 def annotate_all_stack_blocks(bv, set_progress=None):
     imp_data_sym = shinobi.get_symbol_of_type(bv, "__NSConcreteStackBlock", binja.SymbolType.ImportedDataSymbol)
+    imp_addr_sym = shinobi.get_symbol_of_type(bv, "__NSConcreteStackBlock", binja.SymbolType.ImportAddressSymbol)
+    imp_sym = imp_data_sym or imp_addr_sym or None
+    if imp_sym is None:
+        print("__NSConcreteStackBlock not found, target does not appear to contain any stack blocks")
+        return
     # We'd want to use get_code_refs here, but it is very unreliable.
     # Yielded refsrc objects often have only llil but not mlil or hlil;
     # .llil.hlil is also None, .llil.hlils contains the llil that matches,
     # sometimes multiple times.  The issue seems more frequent on but not
     # limited to arm64.
-    #for refsrc in bv.get_code_refs(imp_data_sym.address):
+    #for refsrc in bv.get_code_refs(imp_sym.address):
     #    print(refsrc)
     #    print(refsrc.llil, refsrc.mlil, refsrc.hlil, refsrc.llil.hlil, refsrc.llil.hlils)
     for insn in bv.hlil_instructions:
@@ -690,7 +703,7 @@ def annotate_all_stack_blocks(bv, set_progress=None):
             continue
         if not isinstance(insn.src, binja.HighLevelILImport):
             continue
-        if insn.src.constant != imp_data_sym.address:
+        if insn.src.constant != imp_sym.address:
             continue
         if set_progress is not None:
             set_progress(f"{insn.address:x}")
@@ -731,7 +744,7 @@ def plugin_cmd_annotate_all_stack_blocks(bv, set_progress=None):
 def plugin_cmd_annotate_all_global_blocks(bv, set_progress=None):
     """
     Look for all occurences of __NSConcreteGlobalBlock and
-    annotate stack blocks where references are found.
+    annotate global blocks where references are found.
     """
     _define_ns_concrete_block_imports(bv)
     annotate_all_global_blocks(bv, set_progress=set_progress)

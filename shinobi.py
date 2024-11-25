@@ -109,7 +109,7 @@ def yield_symbols_of_type(bv, name, type_):
     """
     Find all symbols of a specific type and return a generator for them.
     """
-    for sym in filter(lambda x: x.type == type_, bv.symbols[name]):
+    for sym in filter(lambda x: x.type == type_, bv.symbols.get(name, [])):
         yield sym
 
 
@@ -117,7 +117,10 @@ def get_symbol_of_type(bv, name, type_):
     """
     Find a symbol of a specific type and return the first one found.
     """
-    return next(yield_symbols_of_type(bv, name, type_))
+    try:
+        return next(yield_symbols_of_type(bv, name, type_))
+    except StopIteration:
+        return None
 
 
 def reload_hlil_instruction(bv, hlil_insn):
