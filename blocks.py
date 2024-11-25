@@ -36,6 +36,9 @@ def is_valid(bv, arg=None):
     )
 
 
+_TYPE_ID_SOURCE = "binja-blocks"
+
+
 _OBJC_TYPE_SOURCE = """
 struct objc_class {
 };
@@ -50,7 +53,7 @@ typedef struct objc_object* id;
 """
 
 _LIBCLOSURE_TYPE_SOURCE = """
-enum ___BLOCK_LITERAL_FLAGS : uint32_t {
+enum BLOCK_LITERAL_FLAGS : uint32_t {
     BLOCK_DEALLOCATING              = 0x0001U,       // runtime
     BLOCK_REFCOUNT_MASK             = 0xfffeU,       // runtime
     BLOCK_INLINE_LAYOUT_STRING      = 1U << 21,      // compiler
@@ -66,7 +69,7 @@ enum ___BLOCK_LITERAL_FLAGS : uint32_t {
     BLOCK_HAS_EXTENDED_LAYOUT       = 1U << 31,      // compiler
 };
 
-enum ___BLOCK_BYREF_FLAGS : uint32_t {
+enum BLOCK_BYREF_FLAGS : uint32_t {
     BLOCK_BYREF_DEALLOCATING        = 0x0001U,     // runtime
     BLOCK_BYREF_REFCOUNT_MASK       = 0xfffeU,     // runtime
     BLOCK_BYREF_NEEDS_FREE          = 1U << 24,    // runtime
@@ -80,50 +83,50 @@ enum ___BLOCK_BYREF_FLAGS : uint32_t {
     BLOCK_BYREF_LAYOUT_UNRETAINED   = 5U << 28,    // compiler
 };
 
-typedef void(*___BlockCopyFunction)(void *, const void *);
-typedef void(*___BlockDisposeFunction)(const void *);
-typedef void(*___BlockInvokeFunction)(void *, ...);
+typedef void(*BlockCopyFunction)(void *, const void *);
+typedef void(*BlockDisposeFunction)(const void *);
+typedef void(*BlockInvokeFunction)(void *, ...);
 
-struct ___Block_byref_1 {
+struct Block_byref_1 {
     Class isa;
-    struct ___Block_byref_1 *forwarding;
+    struct Block_byref_1 *forwarding;
     volatile uint32_t flags;
     uint32_t size;
 };
 
-typedef void(*___BlockByrefKeepFunction)(struct ___Block_byref*, struct ___Block_byref*);
-typedef void(*___BlockByrefDestroyFunction)(struct ___Block_byref *);
+typedef void(*BlockByrefKeepFunction)(struct Block_byref*, struct Block_byref*);
+typedef void(*BlockByrefDestroyFunction)(struct Block_byref *);
 
-struct ___Block_byref_2 {
-    ___BlockByrefKeepFunction byref_keep;
-    ___BlockByrefDestroyFunction byref_destroy;
+struct Block_byref_2 {
+    BlockByrefKeepFunction byref_keep;
+    BlockByrefDestroyFunction byref_destroy;
 };
 
-struct ___Block_byref_3 {
+struct Block_byref_3 {
     const char *layout;
 };
 
-struct ___Block_descriptor_1 {
+struct Block_descriptor_1 {
     uint64_t reserved;
     uint64_t size;
 };
 
-struct ___Block_descriptor_2 {
-    ___BlockCopyFunction copy;
-    ___BlockDisposeFunction dispose;
+struct Block_descriptor_2 {
+    BlockCopyFunction copy;
+    BlockDisposeFunction dispose;
 };
 
-struct ___Block_descriptor_3 {
+struct Block_descriptor_3 {
     const char *signature;
     const uint8_t *layout;
 };
 
-struct ___Block_literal {
+struct Block_literal {
     Class isa;
     volatile uint32_t flags;
     uint32_t reserved;
-    ___BlockInvokeFunction invoke;
-    struct ___Block_descriptor_1 *descriptor;
+    BlockInvokeFunction invoke;
+    struct Block_descriptor_1 *descriptor;
     // ... imported variables
 };
 """
@@ -147,7 +150,7 @@ def _get_custom_type(bv, name, source):
     if type_ is not None:
         return type_
     types = bv.parse_types_from_string(source)
-    bv.define_types([(binja.Type.generate_auto_type_id("binja-blocks", k), k, v) for k, v in types.types.items()], None)
+    bv.define_types([(binja.Type.generate_auto_type_id(_TYPE_ID_SOURCE, k), k, v) for k, v in types.types.items()], None)
     type_ = bv.get_type_by_name(name)
     assert type_ is not None
     return type_
@@ -209,7 +212,7 @@ class BlockLiteral:
     @classmethod
     def from_stack(cls, bv, bl_insn):
         is_stack_block = True
-        bl_insn.dest.type = _get_libclosure_type(bv, "___Block_literal")
+        bl_insn.dest.type = _get_libclosure_type(bv, "Block_literal")
         bl_insn = shinobi.reload_hlil_instruction(bv, bl_insn)
         for insn in shinobi.yield_struct_field_assign_hlil_instructions_for_var_id(bl_insn.function, bl_insn.var.identifier):
             if insn.dest.member_index == 0:
@@ -275,8 +278,8 @@ class BlockLiteral:
         struct.append(_get_objc_type(self._bv, "Class"), "isa")
         struct.append(self._bv.parse_type_string(f"volatile uint32_t flags")[0], "flags")
         struct.append(self._bv.parse_type_string(f"uint32_t reserved")[0], "reserved")
-        struct.append(_get_libclosure_type(self._bv, "___BlockInvokeFunction"), "invoke")
-        struct.append(binja.Type.pointer(self._bv.arch, _get_libclosure_type(self._bv, "___Block_descriptor_1")), "descriptor")
+        struct.append(_get_libclosure_type(self._bv, "BlockInvokeFunction"), "invoke")
+        struct.append(binja.Type.pointer(self._bv.arch, _get_libclosure_type(self._bv, "Block_descriptor_1")), "descriptor")
         if bd.imported_variables_size > 0:
             if bd.layout != 0 and bd.layout < 0x1000:
                 for i in range(bd.n_strong_ptrs):
@@ -285,15 +288,20 @@ class BlockLiteral:
                     struct.append(_get_objc_type(self._bv, "id"), f"byref_ptr_{i}")
                 for i in range(bd.n_weak_ptrs):
                     struct.append(_get_objc_type(self._bv, "id"), f"weak_ptr_{i}")
-        self.struct = struct
+        self.struct_builder = struct
+        self.struct_name = f"Block_literal_{self.address:x}"
+        self._bv.define_type(binja.Type.generate_auto_type_id(_TYPE_ID_SOURCE, self.struct_name), self.struct_name, self.struct_builder)
+        self.struct_type_name = f"struct {self.struct_name}"
+        self.struct_type = self._bv.parse_type_string(self.struct_type_name)[0]
+        assert self.struct_type is not None
         if self.is_stack_block:
-            self.insn.var.name = f"stack_block_{self.insn.var.name}"
             assert isinstance(self.insn, binja.HighLevelILVarDeclare)
-            self.insn.var.type = self.struct
+            self.insn.var.name = f"stack_block_{self.insn.var.name}"
+            self.insn.var.type = self.struct_type_name
             self.insn = shinobi.reload_hlil_instruction(self._bv, self.insn)
         else:
             self.data_var.name = f"global_block_{self.address:x}"
-            self.data_var.type = self.struct
+            self.data_var.type = self.struct_type_name
 
     def _type_for_ctype(self, ctype):
         if '!' in ctype:
@@ -315,28 +323,22 @@ class BlockLiteral:
             ctypes = objctypes.ObjCEncodedTypes(bd.signature_raw).ctypes
             assert len(ctypes) > 0
             types = list(map(self._type_for_ctype, ctypes))
-            # XXX very noisy, use named type instead
-            #types[1] = binja.Type.pointer(self._bv.arch, self.struct)
+            types[1] = binja.Type.pointer(self._bv.arch, self.struct_type)
             invoke_func.type = binja.Type.function(types[0], types[1:])
         else:
-            # XXX very noisy, use named type instead
-            #invoke_func.type = binja.Type.function(binja.Type.void(), [binja.Type.pointer(self._bv.arch, self.struct)], variable_arguments=True)
-            invoke_func.type = f"void `{invoke_func.name}`(void *block, ...)"
+            invoke_func.type = binja.Type.function(binja.Type.void(), [binja.Type.pointer(self._bv.arch, self.struct_type)], variable_arguments=True)
         if invoke_func.name == f"sub_{invoke_func.start:x}":
             invoke_func.name = f"sub_{invoke_func.start:x}_block_invoke"
         invoke_func.reanalyze()
 
         if bd.block_has_copy_dispose:
             copy_func = self._bv.get_function_at(bd.copy)
-            # XXX very noisy, use named type instead
-            #copy_func.type = binja.Type.function(binja.Type.void(), [binja.Type.pointer(self._bv.arch, self.struct), binja.Type.pointer(self._bv.arch, self.struct)])
-            copy_func.type = f"void `{copy_func.name}`(void *dst, void *src)"
+            copy_func.type = binja.Type.function(binja.Type.void(), [binja.Type.pointer(self._bv.arch, self.struct_type),
+                                                                     binja.Type.pointer(self._bv.arch, self.struct_type)])
             if copy_func.name == f"sub_{copy_func.start:x}":
                 copy_func.name = f"sub_{copy_func.start:x}_block_copy"
             dispose_func = self._bv.get_function_at(bd.dispose)
-            # XXX very noisy, use named type instead
-            #dispose_func.type = binja.Type.function(binja.Type.void(), [binja.Type.pointer(self._bv.arch, self.struct)])
-            dispose_func.type = f"void `{dispose_func.name}`(void *src)"
+            dispose_func.type = binja.Type.function(binja.Type.void(), [binja.Type.pointer(self._bv.arch, self.struct_type)])
             if dispose_func.name == f"sub_{dispose_func.start:x}":
                 dispose_func.name = f"sub_{dispose_func.start:x}_block_dispose"
             copy_func.reanalyze()
@@ -407,7 +409,7 @@ class BlockDescriptor:
     def __str__(self):
         return f"Block descriptor at {self.address:x} size {self.size:#x}"
 
-    def annotate_descriptor(self):
+    def annotate_descriptor(self, bl):
         """
         Annotate block descriptor.
         """
@@ -415,8 +417,8 @@ class BlockDescriptor:
         struct.append(self._bv.parse_type_string("uint64_t reserved")[0], "reserved")
         struct.append(self._bv.parse_type_string("uint64_t size")[0], "size")
         if self.block_has_copy_dispose:
-            struct.append(_get_libclosure_type(self._bv, "___BlockCopyFunction"), "copy")
-            struct.append(_get_libclosure_type(self._bv, "___BlockDisposeFunction"), "dispose")
+            struct.append(_get_libclosure_type(self._bv, "BlockCopyFunction"), "copy")
+            struct.append(_get_libclosure_type(self._bv, "BlockDisposeFunction"), "dispose")
         if self.block_has_signature:
             struct.append(self._bv.parse_type_string("char const *signature")[0], "signature")
             if self.layout != 0:
@@ -428,13 +430,24 @@ class BlockDescriptor:
                     struct.append(self._bv.parse_type_string("uint8_t const *layout")[0], "layout")
             else:
                 struct.append(self._bv.parse_type_string("void *layout")[0], "layout")
-        self.struct = struct
+        self.struct_builder = struct
+        self.struct_name = f"Block_descriptor_{self.address:x}"
+        self._bv.define_type(binja.Type.generate_auto_type_id(_TYPE_ID_SOURCE, self.struct_name), self.struct_name, self.struct_builder)
+        self.struct_type_name = f"struct {self.struct_name}"
+        self.struct_type = self._bv.parse_type_string(self.struct_type_name)[0]
+        assert self.struct_type is not None
         data_var = self._bv.get_data_var_at(self.address)
         if data_var is None:
-            self._bv.define_data_var(self.address, self.struct, f"block_descriptor_{self.address:x}")
+            self._bv.define_data_var(self.address, self.struct_type, f"block_descriptor_{self.address:x}")
         else:
             data_var.name = f"block_descriptor_{self.address:x}"
-            data_var.type = self.struct
+            data_var.type = self.struct_type
+
+        # propagate struct type to descriptor pointer on block literal
+        pointer_index = bl.struct_builder.index_by_name("descriptor")
+        bl.struct_builder.replace(pointer_index, binja.Type.pointer(self._bv.arch, self.struct_type), "descriptor")
+        self._bv.define_type(binja.Type.generate_auto_type_id(_TYPE_ID_SOURCE, bl.struct_name), bl.struct_name, bl.struct_builder)
+        bl.struct_type = self._bv.parse_type_string(bl.struct_type_name)[0]
 
 
 def annotate_global_block_literal(bv, block_literal_addr):
@@ -469,7 +482,7 @@ def annotate_global_block_literal(bv, block_literal_addr):
         bd = BlockDescriptor(bv, bl.descriptor, bl.flags)
         print(bd)
         bl.annotate_literal(bd)
-        bd.annotate_descriptor()
+        bd.annotate_descriptor(bl)
         bl.annotate_functions(bd)
     except NotImplementedError as e:
         print(f"{where}: {e}", file=sys.stderr)
@@ -493,7 +506,7 @@ def annotate_stack_block_literal(bv, block_literal_insn):
         bd = BlockDescriptor(bv, bl.descriptor, bl.flags)
         print(bd)
         bl.annotate_literal(bd)
-        bd.annotate_descriptor()
+        bd.annotate_descriptor(bl)
         bl.annotate_functions(bd)
     except NotImplementedError as e:
         print(f"{where}: {e}", file=sys.stderr)
@@ -584,8 +597,8 @@ def annotate_stack_block_literal(bv, block_literal_insn):
                         byref_size = insn.src.constant
 
                 if (byref_flags & BLOCK_BYREF_HAS_COPY_DISPOSE) != 0:
-                    byref_struct.append(_get_libclosure_type(bv, "___BlockByrefKeepFunction"), "byref_keep")
-                    byref_struct.append(_get_libclosure_type(bv, "___BlockByrefDestroyFunction"), "byref_destroy")
+                    byref_struct.append(_get_libclosure_type(bv, "BlockByrefKeepFunction"), "byref_keep")
+                    byref_struct.append(_get_libclosure_type(bv, "BlockByrefDestroyFunction"), "byref_destroy")
                 byref_layout_nibble = (byref_flags & BLOCK_BYREF_LAYOUT_MASK)
                 if byref_layout_nibble == BLOCK_BYREF_LAYOUT_EXTENDED:
                     byref_struct.append(bv.parse_type_string("void *layout")[0], "layout")
@@ -622,11 +635,21 @@ def annotate_stack_block_literal(bv, block_literal_insn):
                     byref_struct.append(_get_objc_type(bv, "id"), "weak_ptr_0")
                 elif byref_layout_nibble == BLOCK_BYREF_LAYOUT_UNRETAINED:
                     byref_struct.append(_get_objc_type(bv, "id"), "unretained_ptr_0")
-                # Update pointer after having built the entire struct, so that references
-                # to the field is shown with the field name instead of an offset.
-                # XXX how to do this with named structs
-                byref_struct.replace(1, binja.Type.pointer(bv.arch, byref_struct), "forwarding")
-                byref_insn_var.type = byref_struct
+
+                byref_struct_name = f"Block_byref_{byref_insn.address:x}"
+                bv.define_type(binja.Type.generate_auto_type_id(_TYPE_ID_SOURCE, byref_struct_name), byref_struct_name, byref_struct)
+                byref_struct_type_name = f"struct {byref_struct_name}"
+                byref_struct_type = bv.parse_type_string(byref_struct_type_name)[0]
+                assert byref_struct_type is not None
+
+                # propagate registered struct to forwarding self pointer
+                byref_struct.replace(1, binja.Type.pointer(bv.arch, byref_struct_type), "forwarding")
+                bv.define_type(binja.Type.generate_auto_type_id(_TYPE_ID_SOURCE, byref_struct_name), byref_struct_name, byref_struct)
+                byref_struct_type = bv.parse_type_string(byref_struct_type_name)[0]
+
+                byref_insn_var.type = byref_struct_type
+
+                # XXX propagate byref type to block literal type (need byref's block literal struct member index)
 
                 # XXX annotate functions (hard with use of temporary 128-bit reg)
 

@@ -31,13 +31,13 @@ Features:
 -   Annotate stack byrefs
 -   Annotate stack byref fields for non-extended layout
 -   Annotate stack byref fields for extended layout with compact layout encoding
--   Structs for manual annotation: `___Block_literal`, `___Block_descriptor_1`, `___Block_descriptor_2`, `___Block_descriptor_3`, `___Block_byref_1`, `___Block_byref_2`, `___Block_byref_3`.
+-   Define per-block named structs to allow for manual fixups
+-   Define structs for manual annotation: `Block_literal`, `Block_descriptor_1`, `Block_descriptor_2`, `Block_descriptor_3`, `Block_byref_1`, `Block_byref_2`, `Block_byref_3`.
 -   Relevant enums for completeness
 -   Support for 64-bit architectures
 
 Planned improvements, PRs welcome:
 
--   Register named types for data-parametrised structs for better readability and manual use
 -   Propagate byref types to block literal types
 -   Annotate block imported variables for extended layout with bytecode
 -   Annotate block imported variables for non-extended layout
