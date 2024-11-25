@@ -288,6 +288,7 @@ class BlockLiteral:
                     struct.append(_get_objc_type(self._bv, "id"), f"byref_ptr_{i}")
                 for i in range(bd.n_weak_ptrs):
                     struct.append(_get_objc_type(self._bv, "id"), f"weak_ptr_{i}")
+
         self.struct_builder = struct
         self.struct_name = f"Block_literal_{self.address:x}"
         self._bv.define_type(binja.Type.generate_auto_type_id(_TYPE_ID_SOURCE, self.struct_name), self.struct_name, self.struct_builder)
@@ -302,6 +303,10 @@ class BlockLiteral:
         else:
             self.data_var.name = f"global_block_{self.address:x}"
             self.data_var.type = self.struct_type_name
+
+        if self.struct_builder.width < bd.size:
+            n_unaccounted = bd.size - struct.width
+            self._bv.set_comment_at(self.address, f"Block literal of size {bd.size:#x}\nstruct {self.struct_name} of width {self.struct_builder.width:#x}\n{n_unaccounted:#x} bytes missing in struct type\nAdd manually by modifying struct type")
 
     def _type_for_ctype(self, ctype):
         if '!' in ctype:
