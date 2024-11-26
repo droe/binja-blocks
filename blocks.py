@@ -598,7 +598,8 @@ def annotate_stack_block_literal(bv, block_literal_insn):
                                            binja.HighLevelILDeref,
                                            binja.HighLevelILImport,
                                            binja.HighLevelILConst,
-                                           binja.HighLevelILConstPtr)):
+                                           binja.HighLevelILConstPtr,
+                                           binja.HighLevelILCall)):
                     insn_src = None
                 else:
                     print(f"{where}: Skipping assignment right-hand-side for {insn.src!r}, fix plugin", file=sys.stderr)
