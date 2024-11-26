@@ -75,7 +75,7 @@ class ObjCEncodedTypes:
     Qualifier positioning is a guess, haven't seen this in block types.
     Not sure how to disambiguate bitfield width from stack size.
 
-    Not imeplemnted:
+    Not implemented:
     Bitfields, type qualifiers
 
     Hacks:

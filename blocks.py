@@ -144,6 +144,14 @@ BLOCK_BYREF_LAYOUT_STRONG       = 0x30000000
 BLOCK_BYREF_LAYOUT_WEAK         = 0x40000000
 BLOCK_BYREF_LAYOUT_UNRETAINED   = 0x50000000
 
+BLOCK_LAYOUT_ESCAPE             = 0x0   # lo nibble 0 halt, remainder is non-pointer (lo != 0 undef)
+BLOCK_LAYOUT_NON_OBJECT_BYTES   = 0x1   # lo nibble # bytes non-objects
+BLOCK_LAYOUT_NON_OBJECT_WORDS   = 0x2   # lo nibble # ptr-sized words non-objects
+BLOCK_LAYOUT_STRONG             = 0x3   # lo nibble # strong pointers
+BLOCK_LAYOUT_BYREF              = 0x4   # lo nibble # byref pointers
+BLOCK_LAYOUT_WEAK               = 0x5   # lo nibble # weak pointers
+BLOCK_LAYOUT_UNRETAINED         = 0x6   # lo nibble # unretained pointers
+
 
 def _get_custom_type(bv, name, source):
     type_ = bv.get_type_by_name(name)
@@ -188,11 +196,71 @@ def _define_ns_concrete_block_imports(bv):
         ext_sym = shinobi.get_symbol_of_type(bv, sym_name, binja.SymbolType.ExternalSymbol)
         if ext_sym is None:
             return
-        data_var = bv.get_data_var_at(ext_sym.address)
-        if data_var is None:
-            bv.define_data_var(ext_sym.address, class_type)
-        else:
-            data_var.type = class_type
+        shinobi.make_data_var(bv,
+                              ext_sym.address,
+                              class_type)
+
+
+def append_layout_fields(bv, struct, layout, block_has_extended_layout, byref_indexes=None, layout_end_obj=None):
+    """
+    Append fields specified by layout to struct.
+    If byref_indexes is given, the struct member index of all byref pointers is
+    appended to byref_indexes.  If layout_end_obj is given, and layout is an
+    extended layout bytecode, set layout_end_obj.layout_end to the end address
+    of the bytecode.
+    """
+    if layout == 0:
+        return
+    if not block_has_extended_layout:
+        # XXX
+        return
+    if layout < 0x1000:
+        # compact encoding
+        n_strong_ptrs = (layout >> 8) & 0xf
+        n_byref_ptrs = (layout >> 4) & 0xf
+        n_weak_ptrs = layout & 0xf
+        for _ in range(n_strong_ptrs):
+            struct.append(_get_objc_type(bv, "id"), f"strong_ptr_{struct.width:x}")
+        for _ in range(n_byref_ptrs):
+            if byref_indexes is not None:
+                byref_indexes.append(len(struct.members))
+            struct.append(_get_objc_type(bv, "id"), f"byref_ptr_{struct.width:x}")
+        for _ in range(n_weak_ptrs):
+            struct.append(_get_objc_type(bv, "id"), f"weak_ptr_{struct.width:x}")
+    else:
+        # bytecode encoding
+        br = binja.BinaryReader(bv)
+        br.seek(layout)
+        while True:
+            op = br.read8()
+            opcode = (op & 0xf0) >> 4
+            oparg = (op & 0x0f)
+            if opcode == BLOCK_LAYOUT_ESCAPE:
+                break
+            elif opcode == BLOCK_LAYOUT_NON_OBJECT_BYTES:
+                struct.append(bv.parse_type_string(f"uint8_t [{oparg}]")[0], f"non_object_{struct.width:x}")
+            elif opcode == BLOCK_LAYOUT_NON_OBJECT_WORDS:
+                for _ in range(oparg):
+                    struct.append(bv.parse_type_string(f"uint64_t")[0], f"non_object_{struct.width:x}")
+            elif opcode == BLOCK_LAYOUT_STRONG:
+                for _ in range(oparg):
+                    struct.append(_get_objc_type(bv, "id"), f"strong_ptr_{struct.width:x}")
+            elif opcode == BLOCK_LAYOUT_BYREF:
+                for _ in range(oparg):
+                    if byref_indexes is not None:
+                        byref_indexes.append(len(struct.members))
+                    struct.append(_get_objc_type(bv, "id"), f"byref_ptr_{struct.width:x}")
+            elif opcode == BLOCK_LAYOUT_WEAK:
+                for _ in range(oparg):
+                    struct.append(_get_objc_type(bv, "id"), f"weak_ptr_{struct.width:x}")
+            elif opcode == BLOCK_LAYOUT_UNRETAINED:
+                for _ in range(oparg):
+                    struct.append(_get_objc_type(bv, "id"), f"unretained_ptr_{struct.width:x}")
+            else:
+                print(f"Warning: Unknown extended layout op {op:#04x}")
+                break
+        if layout_end_obj is not None:
+            layout_end_obj.layout_end = br.offset
 
 
 class BlockLiteral:
@@ -276,21 +344,17 @@ class BlockLiteral:
         """
         Annotate the block literal.
         """
-        struct = binja.StructureBuilder.create()
+        # Packed because block layout bytecode can lead to misaligned words,
+        # which according to comments in LLVM source code seems intentional.
+        struct = binja.StructureBuilder.create(packed=True)
         struct.append(_get_objc_type(self._bv, "Class"), "isa")
         struct.append(self._bv.parse_type_string(f"volatile uint32_t flags")[0], "flags")
         struct.append(self._bv.parse_type_string(f"uint32_t reserved")[0], "reserved")
         struct.append(_get_libclosure_type(self._bv, "BlockInvokeFunction"), "invoke")
         struct.append(binja.Type.pointer(self._bv.arch, _get_libclosure_type(self._bv, "Block_descriptor_1")), "descriptor") # placeholder
         if bd.imported_variables_size > 0:
-            if bd.layout != 0 and bd.layout < 0x1000:
-                for i in range(bd.n_strong_ptrs):
-                    struct.append(_get_objc_type(self._bv, "id"), f"strong_ptr_{i}")
-                for i in range(bd.n_byref_ptrs):
-                    struct.append(_get_objc_type(self._bv, "id"), f"byref_ptr_{i}")
-                for i in range(bd.n_weak_ptrs):
-                    struct.append(_get_objc_type(self._bv, "id"), f"weak_ptr_{i}")
-
+            self.byref_indexes = []
+            append_layout_fields(self._bv, struct, bd.layout, bd.block_has_extended_layout, self.byref_indexes, layout_end_obj=bd)
         self.struct_builder = struct
         self.struct_name = f"Block_literal_{self.address:x}"
         self._bv.define_type(binja.Type.generate_auto_type_id(_TYPE_ID_SOURCE, self.struct_name), self.struct_name, self.struct_builder)
@@ -320,6 +384,14 @@ class BlockLiteral:
             return self._bv.parse_type_string(ctype)[0]
         except SyntaxError:
             return self._bv.parse_type_string(fallback)[0]
+
+    def annotate_layout_bytecode(self, bd):
+        if bd.layout >= 0x1000 and bd.block_has_extended_layout:
+            n = bd.layout_end - bd.layout
+            shinobi.make_data_var(self._bv,
+                                  bd.layout,
+                                  self._bv.parse_type_string(f"uint8_t [{n}]")[0],
+                                  f"block_layout_{bd.layout:x}")
 
     def annotate_functions(self, bd):
         """
@@ -379,22 +451,14 @@ class BlockDescriptor:
             else:
                 self.signature_raw = None
             self.layout = br.read64()
-            if self.layout != 0:
-                if self.block_has_extended_layout:
-                    if self.layout < 0x1000:
-                        # compact encoding
-                        self.n_strong_ptrs = (self.layout >> 8) & 0xf
-                        self.n_byref_ptrs = (self.layout >> 4) & 0xf
-                        self.n_weak_ptrs = self.layout & 0xf
-                    else:
-                        print(f"Warning: {self.address:x}: BLOCK_HAS_EXTENDED_LAYOUT set and layout > 0x1000, layout bytecode not supported yet", file=sys.stderr)
-                else:
-                    print(f"Warning: {self.address:x}: BLOCK_HAS_EXTENDED_LAYOUT unset, non-extended layout not supported yet", file=sys.stderr)
+            if self.layout != 0 and not self.block_has_extended_layout:
+                print(f"Warning: {self.address:x}: BLOCK_HAS_EXTENDED_LAYOUT unset, non-extended layout not supported yet", file=sys.stderr)
 
     @property
     def imported_variables_size(self):
         return self.size - 0x20
 
+    # XXX clean these up, probably want to move them to bl, pass bl to ctor
     @property
     def block_has_copy_dispose(self):
         return (self.block_flags & BLOCK_HAS_COPY_DISPOSE) != 0
@@ -426,14 +490,13 @@ class BlockDescriptor:
             struct.append(_get_libclosure_type(self._bv, "BlockDisposeFunction"), "dispose")
         if self.block_has_signature:
             struct.append(self._bv.parse_type_string("char const *signature")[0], "signature")
-            if self.layout != 0:
-                # should not reach this for non-extended layout
-                assert self.block_has_extended_layout
+            if self.layout != 0 and self.block_has_extended_layout:
                 if self.layout < 0x1000:
                     struct.append(self._bv.parse_type_string("uint64_t layout")[0], "layout")
                 else:
                     struct.append(self._bv.parse_type_string("uint8_t const *layout")[0], "layout")
             else:
+                # XXX non-extended layout or layout 0
                 struct.append(self._bv.parse_type_string("void *layout")[0], "layout")
         self.struct_builder = struct
         self.struct_name = f"Block_descriptor_{self.address:x}"
@@ -441,12 +504,10 @@ class BlockDescriptor:
         self.struct_type_name = f"struct {self.struct_name}"
         self.struct_type = self._bv.parse_type_string(self.struct_type_name)[0]
         assert self.struct_type is not None
-        data_var = self._bv.get_data_var_at(self.address)
-        if data_var is None:
-            self._bv.define_data_var(self.address, self.struct_type, f"block_descriptor_{self.address:x}")
-        else:
-            data_var.name = f"block_descriptor_{self.address:x}"
-            data_var.type = self.struct_type
+        shinobi.make_data_var(self._bv,
+                              self.address,
+                              self.struct_type,
+                              f"block_descriptor_{self.address:x}")
 
         # propagate struct type to descriptor pointer on block literal
         pointer_index = bl.struct_builder.index_by_name("descriptor")
@@ -491,6 +552,7 @@ def annotate_global_block_literal(bv, block_literal_addr):
         print(bd)
         bl.annotate_literal(bd)
         bd.annotate_descriptor(bl)
+        bl.annotate_layout_bytecode(bd)
         bl.annotate_functions(bd)
     except NotImplementedError as e:
         print(f"{where}: {e}", file=sys.stderr)
@@ -515,6 +577,7 @@ def annotate_stack_block_literal(bv, block_literal_insn):
         print(bd)
         bl.annotate_literal(bd)
         bd.annotate_descriptor(bl)
+        bl.annotate_layout_bytecode(bd)
         bl.annotate_functions(bd)
     except NotImplementedError as e:
         print(f"{where}: {e}", file=sys.stderr)
@@ -522,151 +585,140 @@ def annotate_stack_block_literal(bv, block_literal_insn):
 
     # annotate stack byrefs
 
-    if bd.imported_variables_size > 0:
-        assert bd.layout != 0
-        if bd.layout < 0x1000 and bd.n_byref_ptrs > 0:
-            byref_srcs = []
-            try:
-                for insn in shinobi.yield_struct_field_assign_hlil_instructions_for_var_id(bl.insn.function, bl.insn.var.identifier):
-                    if isinstance(insn.src, binja.HighLevelILVar):
-                        insn_src = insn.src
-                    elif isinstance(insn.src, binja.HighLevelILAddressOf):
-                        insn_src = insn.src
-                    elif isinstance(insn.src, (binja.HighLevelILDerefField,
-                                               binja.HighLevelILDeref,
-                                               binja.HighLevelILImport,
-                                               binja.HighLevelILConst,
-                                               binja.HighLevelILConstPtr)):
-                        insn_src = None
-                    else:
-                        print(f"{where}: Skipping assignment right-hand-side for {insn.src!r}, fix plugin", file=sys.stderr)
-                        continue
-                    if insn.dest.member_index >= 5 + bd.n_strong_ptrs and insn.dest.member_index < 5 + bd.n_strong_ptrs + bd.n_byref_ptrs:
-                        byref_srcs.append((insn_src, insn.dest.member_index))
-            except NotImplementedError as e:
-                print(f"{where}: {e}", file=sys.stderr)
-
-            assert bd.n_byref_ptrs == len(byref_srcs)
-            for byref_src, byref_member_index in byref_srcs:
-                if byref_src is None:
-                    continue
-                if isinstance(byref_src.src, binja.HighLevelILVar):
-                    var_id = byref_src.src.var.identifier
-                elif isinstance(byref_src.src, binja.HighLevelILAdd):
-                    print(f"{where}: Byref src var {byref_src} src is HighLevelILAdd: Annotate manually", file=sys.stderr)
-                    continue
+    if bd.imported_variables_size > 0 and len(bl.byref_indexes) > 0:
+        byref_srcs = []
+        try:
+            byref_indexes_set = set(bl.byref_indexes)
+            for insn in shinobi.yield_struct_field_assign_hlil_instructions_for_var_id(bl.insn.function, bl.insn.var.identifier):
+                if isinstance(insn.src, binja.HighLevelILVar):
+                    insn_src = insn.src
+                elif isinstance(insn.src, binja.HighLevelILAddressOf):
+                    insn_src = insn.src
+                elif isinstance(insn.src, (binja.HighLevelILDerefField,
+                                           binja.HighLevelILDeref,
+                                           binja.HighLevelILImport,
+                                           binja.HighLevelILConst,
+                                           binja.HighLevelILConstPtr)):
+                    insn_src = None
                 else:
-                    print(f"{where}: Byref src var {byref_src} src is {type(byref_src.src).__name__}: Annotate manually", file=sys.stderr)
+                    print(f"{where}: Skipping assignment right-hand-side for {insn.src!r}, fix plugin", file=sys.stderr)
                     continue
+                if insn.dest.member_index in byref_indexes_set:
+                    byref_srcs.append((insn_src, insn.dest.member_index))
+        except NotImplementedError as e:
+            print(f"{where}: {e}", file=sys.stderr)
 
-                byref_insn = None
-                for insn in bl.insn.function.instructions:
-                    if isinstance(insn, binja.HighLevelILVarDeclare):
-                        cand_var = insn.var
-                    elif isinstance(insn, binja.HighLevelILVarInit):
-                        if isinstance(insn.dest, binja.HighLevelILStructField):
-                            continue
-                        cand_var = insn.dest
-                    else:
+        assert len(byref_srcs) == len(bl.byref_indexes)
+        for byref_src, byref_member_index in byref_srcs:
+            if byref_src is None:
+                continue
+            if isinstance(byref_src.src, binja.HighLevelILVar):
+                var_id = byref_src.src.var.identifier
+            elif isinstance(byref_src.src, binja.HighLevelILAdd):
+                print(f"{where}: Byref src var {byref_src} src is HighLevelILAdd: Annotate manually", file=sys.stderr)
+                continue
+            else:
+                print(f"{where}: Byref src var {byref_src} src is {type(byref_src.src).__name__}: Annotate manually", file=sys.stderr)
+                continue
+
+            byref_insn = None
+            for insn in bl.insn.function.instructions:
+                if isinstance(insn, binja.HighLevelILVarDeclare):
+                    cand_var = insn.var
+                elif isinstance(insn, binja.HighLevelILVarInit):
+                    if isinstance(insn.dest, binja.HighLevelILStructField):
                         continue
-
-                    if cand_var.identifier == var_id:
-                        byref_insn = insn
-                        byref_insn_var = cand_var
-                        break
-
+                    cand_var = insn.dest
                 else:
-                    print(f"{where}: Byref src var {byref_src} id {var_id:x} not found in function's var declarations and inits", file=sys.stderr)
                     continue
 
-                # So apparently this works; despite the reloads, byref_srcs are not invalidated, identifiers are still current.
-                # Should that cease to be the case, we'll need to find next byref_src in a way that is robust to reloads.
+                if cand_var.identifier == var_id:
+                    byref_insn = insn
+                    byref_insn_var = cand_var
+                    break
 
-                byref_insn_var.name = f"block_byref_{byref_insn_var.name}"
+            else:
+                print(f"{where}: Byref src var {byref_src} id {var_id:x} not found in function's var declarations and inits", file=sys.stderr)
+                continue
 
-                byref_struct = binja.StructureBuilder.create()
-                byref_struct.append(_get_objc_type(bv, "Class"), "isa")
-                byref_struct.append(bv.parse_type_string("void *forwarding")[0], "forwarding") # placeholder
-                byref_struct.append(bv.parse_type_string("volatile int32_t flags")[0], "flags")
-                byref_struct.append(bv.parse_type_string("uint32_t size")[0], "size")
+            # So apparently this works; despite the reloads, byref_srcs are not invalidated, identifiers are still current.
+            # Should that cease to be the case, we'll need to find next byref_src in a way that is robust to reloads.
 
+            byref_insn_var.name = f"block_byref_{byref_insn_var.name}"
+
+            byref_struct = binja.StructureBuilder.create()
+            byref_struct.append(_get_objc_type(bv, "Class"), "isa")
+            byref_struct.append(bv.parse_type_string("void *forwarding")[0], "forwarding") # placeholder
+            byref_struct.append(bv.parse_type_string("volatile int32_t flags")[0], "flags")
+            byref_struct.append(bv.parse_type_string("uint32_t size")[0], "size")
+
+            byref_insn_var.type = byref_struct
+            byref_insn = shinobi.reload_hlil_instruction(bv, byref_insn)
+            byref_insn_var = byref_insn.var
+
+            for insn in shinobi.yield_struct_field_assign_hlil_instructions_for_var_id(byref_insn.function, byref_insn_var.identifier):
+                # 0 isa
+                # 1 forwarding
+                if insn.dest.member_index == 2:
+                    assert isinstance(insn.src, binja.HighLevelILConst)
+                    byref_flags = insn.src.constant
+                elif insn.dest.member_index == 3:
+                    assert isinstance(insn.src, binja.HighLevelILConst)
+                    byref_size = insn.src.constant
+
+            print(f"Block byref at {byref_insn.address:x} flags {byref_flags:08x} size {byref_size:#x}")
+
+            if (byref_flags & BLOCK_BYREF_HAS_COPY_DISPOSE) != 0:
+                byref_struct.append(_get_libclosure_type(bv, "BlockByrefKeepFunction"), "byref_keep")
+                byref_struct.append(_get_libclosure_type(bv, "BlockByrefDestroyFunction"), "byref_destroy")
+            byref_layout_nibble = (byref_flags & BLOCK_BYREF_LAYOUT_MASK)
+            if byref_layout_nibble == BLOCK_BYREF_LAYOUT_EXTENDED:
+                byref_struct.append(bv.parse_type_string("void *layout")[0], "layout")
+                layout_index = byref_struct.index_by_name("layout")
                 byref_insn_var.type = byref_struct
                 byref_insn = shinobi.reload_hlil_instruction(bv, byref_insn)
                 byref_insn_var = byref_insn.var
-
                 for insn in shinobi.yield_struct_field_assign_hlil_instructions_for_var_id(byref_insn.function, byref_insn_var.identifier):
-                    # 0 isa
-                    # 1 forwarding
-                    if insn.dest.member_index == 2:
-                        assert isinstance(insn.src, binja.HighLevelILConst)
-                        byref_flags = insn.src.constant
-                    elif insn.dest.member_index == 3:
-                        assert isinstance(insn.src, binja.HighLevelILConst)
-                        byref_size = insn.src.constant
+                    if insn.dest.member_index == layout_index:
+                        isinstance(insn.src, binja.HighLevelILConstPtr)
+                        byref_layout = insn.src.constant
+                        break
+                if byref_layout != 0:
+                    if byref_layout < 0x1000:
+                        byref_struct.replace(layout_index, bv.parse_type_string("uint64_t layout")[0], "layout")
+                    else:
+                        byref_struct.replace(layout_index, bv.parse_type_string("uint8_t const *layout")[0], "layout")
+                append_layout_fields(bv, byref_struct, byref_layout, block_has_extended_layout=True)
+            elif byref_layout_nibble == BLOCK_BYREF_LAYOUT_NON_OBJECT:
+                byref_struct.append(bv.parse_type_string("uint64_t non_object_0")[0], "non_object_0")
+            elif byref_layout_nibble == BLOCK_BYREF_LAYOUT_STRONG:
+                byref_struct.append(_get_objc_type(bv, "id"), "strong_ptr_0")
+            elif byref_layout_nibble == BLOCK_BYREF_LAYOUT_WEAK:
+                byref_struct.append(_get_objc_type(bv, "id"), "weak_ptr_0")
+            elif byref_layout_nibble == BLOCK_BYREF_LAYOUT_UNRETAINED:
+                byref_struct.append(_get_objc_type(bv, "id"), "unretained_ptr_0")
 
-                print(f"Block byref at {byref_insn.address:x} flags {byref_flags:08x} size {byref_size:#x}")
+            byref_struct_name = f"Block_byref_{byref_insn.address:x}"
+            bv.define_type(binja.Type.generate_auto_type_id(_TYPE_ID_SOURCE, byref_struct_name), byref_struct_name, byref_struct)
+            byref_struct_type_name = f"struct {byref_struct_name}"
+            byref_struct_type = bv.parse_type_string(byref_struct_type_name)[0]
+            assert byref_struct_type is not None
 
-                if (byref_flags & BLOCK_BYREF_HAS_COPY_DISPOSE) != 0:
-                    byref_struct.append(_get_libclosure_type(bv, "BlockByrefKeepFunction"), "byref_keep")
-                    byref_struct.append(_get_libclosure_type(bv, "BlockByrefDestroyFunction"), "byref_destroy")
-                byref_layout_nibble = (byref_flags & BLOCK_BYREF_LAYOUT_MASK)
-                if byref_layout_nibble == BLOCK_BYREF_LAYOUT_EXTENDED:
-                    byref_struct.append(bv.parse_type_string("void *layout")[0], "layout")
-                    layout_index = byref_struct.index_by_name("layout")
-                    byref_insn_var.type = byref_struct
-                    byref_insn = shinobi.reload_hlil_instruction(bv, byref_insn)
-                    byref_insn_var = byref_insn.var
-                    for insn in shinobi.yield_struct_field_assign_hlil_instructions_for_var_id(byref_insn.function, byref_insn_var.identifier):
-                        if insn.dest.member_index == layout_index:
-                            isinstance(insn.src, binja.HighLevelILConstPtr)
-                            byref_layout = insn.src.constant
-                            break
-                    if byref_layout != 0:
-                        if byref_layout < 0x1000:
-                            byref_struct.replace(layout_index, bv.parse_type_string("uint64_t layout")[0], "layout")
-                            # compact encoding
-                            n_strong_ptrs = (byref_layout >> 8) & 0xf
-                            n_byref_ptrs = (byref_layout >> 4) & 0xf
-                            n_weak_ptrs = byref_layout & 0xf
-                            for i in range(n_strong_ptrs):
-                                struct.append(_get_objc_type(bv, "id"), f"strong_ptr_{i}")
-                            for i in range(n_byref_ptrs):
-                                struct.append(_get_objc_type(bv, "id"), f"byref_ptr_{i}")
-                            for i in range(n_weak_ptrs):
-                                struct.append(_get_objc_type(bv, "id"), f"weak_ptr_{i}")
-                        else:
-                            byref_struct.replace(layout_index, bv.parse_type_string("uint8_t const *layout")[0], "layout")
-                            # XXX append fields according to layout
-                elif byref_layout_nibble == BLOCK_BYREF_LAYOUT_NON_OBJECT:
-                    byref_struct.append(bv.parse_type_string("uint64_t non_object_0")[0], "non_object_0")
-                elif byref_layout_nibble == BLOCK_BYREF_LAYOUT_STRONG:
-                    byref_struct.append(_get_objc_type(bv, "id"), "strong_ptr_0")
-                elif byref_layout_nibble == BLOCK_BYREF_LAYOUT_WEAK:
-                    byref_struct.append(_get_objc_type(bv, "id"), "weak_ptr_0")
-                elif byref_layout_nibble == BLOCK_BYREF_LAYOUT_UNRETAINED:
-                    byref_struct.append(_get_objc_type(bv, "id"), "unretained_ptr_0")
+            # propagate registered struct to forwarding self pointer
+            byref_struct.replace(1, binja.Type.pointer(bv.arch, byref_struct_type), "forwarding")
+            bv.define_type(binja.Type.generate_auto_type_id(_TYPE_ID_SOURCE, byref_struct_name), byref_struct_name, byref_struct)
+            byref_struct_type = bv.parse_type_string(byref_struct_type_name)[0]
 
-                byref_struct_name = f"Block_byref_{byref_insn.address:x}"
-                bv.define_type(binja.Type.generate_auto_type_id(_TYPE_ID_SOURCE, byref_struct_name), byref_struct_name, byref_struct)
-                byref_struct_type_name = f"struct {byref_struct_name}"
-                byref_struct_type = bv.parse_type_string(byref_struct_type_name)[0]
-                assert byref_struct_type is not None
+            byref_insn_var.type = byref_struct_type
 
-                # propagate registered struct to forwarding self pointer
-                byref_struct.replace(1, binja.Type.pointer(bv.arch, byref_struct_type), "forwarding")
-                bv.define_type(binja.Type.generate_auto_type_id(_TYPE_ID_SOURCE, byref_struct_name), byref_struct_name, byref_struct)
-                byref_struct_type = bv.parse_type_string(byref_struct_type_name)[0]
+            # propagate byref type to block literal type
+            byref_member_name = bl.struct_builder.members[byref_member_index].name
+            assert byref_member_name.startswith("byref_ptr_")
+            bl.struct_builder.replace(byref_member_index, binja.Type.pointer(bv.arch, byref_struct_type), byref_member_name)
+            bv.define_type(binja.Type.generate_auto_type_id(_TYPE_ID_SOURCE, bl.struct_name), bl.struct_name, bl.struct_builder)
+            bl.struct_type = bv.parse_type_string(bl.struct_type_name)[0]
 
-                byref_insn_var.type = byref_struct_type
-
-                # propagate byref type to block literal type
-                byref_member_name = bl.struct_builder.members[byref_member_index].name
-                assert byref_member_name.startswith("byref_ptr_")
-                bl.struct_builder.replace(byref_member_index, binja.Type.pointer(bv.arch, byref_struct_type), byref_member_name)
-                bv.define_type(binja.Type.generate_auto_type_id(_TYPE_ID_SOURCE, bl.struct_name), bl.struct_name, bl.struct_builder)
-                bl.struct_type = bv.parse_type_string(bl.struct_type_name)[0]
-
-                # XXX annotate functions (hard with use of temporary 128-bit reg)
+            # XXX annotate functions (hard with use of temporary 128-bit reg)
 
     return
 

@@ -123,6 +123,24 @@ def get_symbol_of_type(bv, name, type_):
         return None
 
 
+def make_data_var(bv, address, type_, name=None):
+    """
+    Make a data var of given type and name at address.
+    If a data var already exists, its name and type are set.
+    If a data var does not exist, it is created.
+    """
+    data_var = bv.get_data_var_at(address)
+    if data_var is None:
+        if name is not None:
+            bv.define_data_var(address, type_, name)
+        else:
+            bv.define_data_var(address, type_)
+    else:
+        if name is not None:
+            data_var.name = name
+        data_var.type = type_
+
+
 def reload_hlil_instruction(bv, hlil_insn):
     """
     Refresh the instruction and the function it is associated with.
