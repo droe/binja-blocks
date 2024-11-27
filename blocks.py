@@ -22,6 +22,7 @@
 import binaryninja as binja
 
 import sys
+import traceback
 
 from . import shinobi
 from . import objctypes
@@ -290,16 +291,25 @@ class BlockLiteral:
                 assert str(insn.src) == '__NSConcreteStackBlock'
                 isa = insn.src.address
             elif insn.dest.member_index == 1:
-                assert isinstance(insn.src, binja.HighLevelILConst)
+                # This assertion may fail when Binja failed to figure out
+                # that these fields are set to a constant.  We absolutely
+                # do need the flags tho.
+                assert isinstance(insn.src, (binja.HighLevelILConst,
+                                             binja.HighLevelILConstPtr))
                 flags = insn.src.constant
             elif insn.dest.member_index == 2:
-                assert isinstance(insn.src, binja.HighLevelILConst)
-                reserved = insn.src.constant
+                if isinstance(insn.src, (binja.HighLevelILConst,
+                                         binja.HighLevelILConstPtr)):
+                    reserved = insn.src.constant
+                else:
+                    reserved = None
             elif insn.dest.member_index == 3:
-                assert isinstance(insn.src, binja.HighLevelILConstPtr)
+                assert isinstance(insn.src, (binja.HighLevelILConst,
+                                             binja.HighLevelILConstPtr))
                 invoke = insn.src.constant
             elif insn.dest.member_index == 4:
-                assert isinstance(insn.src, binja.HighLevelILConstPtr)
+                assert isinstance(insn.src, (binja.HighLevelILConst,
+                                             binja.HighLevelILConstPtr))
                 descriptor = insn.src.constant
             else:
                 # We don't know if the members are assigned in-order,
@@ -565,8 +575,8 @@ def annotate_global_block_literal(bv, block_literal_addr):
         bd.annotate_descriptor(bl)
         bl.annotate_layout_bytecode(bd)
         bl.annotate_functions(bd)
-    except NotImplementedError as e:
-        print(f"{where}: {e}", file=sys.stderr)
+    except Exception as e:
+        print(f"{where}: {type(e).__name__} {e}\n{traceback.format_exc()}", file=sys.stderr)
         return
 
 
@@ -590,9 +600,11 @@ def annotate_stack_block_literal(bv, block_literal_insn):
         bd.annotate_descriptor(bl)
         bl.annotate_layout_bytecode(bd)
         bl.annotate_functions(bd)
-    except NotImplementedError as e:
-        print(f"{where}: {e}", file=sys.stderr)
+    except Exception as e:
+        print(f"{where}: {type(e).__name__} {e}\n{traceback.format_exc()}", file=sys.stderr)
         return
+
+    # XXX refactor byref handling
 
     # annotate stack byrefs
 
@@ -617,8 +629,9 @@ def annotate_stack_block_literal(bv, block_literal_insn):
                     continue
                 if insn.dest.member_index in byref_indexes_set:
                     byref_srcs.append((insn_src, insn.dest.member_index))
-        except NotImplementedError as e:
-            print(f"{where}: {e}", file=sys.stderr)
+        except Exception as e:
+            print(f"{where}: {type(e).__name__} {e}\n{traceback.format_exc()}", file=sys.stderr)
+            return
 
         assert len(byref_srcs) == len(bl.byref_indexes)
         for byref_src, byref_member_index in byref_srcs:
