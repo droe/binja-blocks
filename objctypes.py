@@ -67,7 +67,7 @@ class ObjCEncodedTypes:
     Structure (this is pure guesswork):
     signature = type_and_stack_size [ ... ]
     type_and_stack_size = type stack_size
-    type = [ qualifier ] { basic_type | nested_type }
+    type = [ qualifier ] { basic_type | nested_type } [ bitfield ... ]
     stack_size = number [ ... ]
 
     Caveats:
@@ -75,9 +75,7 @@ class ObjCEncodedTypes:
     Qualifier positioning and semantics is guesswork.
     Qualifiers other than const (r) are ignored.
     Not sure how to disambiguate bitfield width from stack size.
-
-    Not implemented:
-    Bitfields
+    Bitfields are ignored.
 
     Notable hacks:
     For types that need fallback to id instead of void *, ! is emitted.
@@ -101,6 +99,8 @@ class ObjCEncodedTypes:
     ['void', 'void *', 'void *']
     >>> ObjCEncodedTypes(b'r^{__CFString=}8@?0').ctypes
     ['const struct __CFString *', 'void *']
+    >>> ObjCEncodedTypes(b'{PersistentSubscriptionIdentifier={basic_string<char, std::char_traits<char>, std::allocator<char>>={__compressed_pair<std::basic_string<char>::__rep, std::allocator<char>>={__rep=(?={__long=*Qb63b1}{__short=[23c][0C]b7b1}{__raw=[3Q]})}}}{basic_string<char, std::char_traits<char>, std::allocator<char>>={__compressed_pair<std::basic_string<char>::__rep, std::allocator<char>>={__rep=(?={__long=*Qb63b1}{__short=[23c][0C]b7b1}{__raw=[3Q]})}}}{type_index=^{type_info}}}8@?0').ctypes
+    ['struct PersistentSubscriptionIdentifier', 'void *']
     """
 
     BASIC_TYPE_MAP = {
@@ -147,6 +147,13 @@ class ObjCEncodedTypes:
             self._parse_number()
             self.ctypes.append(t)
 
+    def _skip_bitfield(self):
+        c = self._peek()
+        while c == b"b":
+            self._consume(1)
+            _ = self._parse_number()
+            c = self._peek()
+
     def _parse_type(self):
         #print(f"_parse_type idx {self._idx} {self._raw[self._idx:]}", file=sys.stderr)
         c = self._peek()
@@ -185,11 +192,13 @@ class ObjCEncodedTypes:
         ctype = self.BASIC_TYPE_MAP.get(c, None)
         if ctype is not None:
             self._consume(1)
+            self._skip_bitfield()
             return qual + ctype
 
         if c == b"^":
             self._consume(1)
             target_ctype = self._parse_type()
+            self._skip_bitfield()
             if target_ctype[-1:] == "*":
                 return qual + target_ctype + "*"
             else:
@@ -216,7 +225,7 @@ class ObjCEncodedTypes:
                 pass
             assert self._peek() == sentinel
             self._consume(1)
-
+            self._skip_bitfield()
             # We could try to construct an anonymous struct or
             # union here, but let's not bother for now.
             if any([structname.startswith(prefix) for prefix in ["shared_ptr<", "unique_ptr<", "weak_ptr<"]]):
@@ -233,6 +242,7 @@ class ObjCEncodedTypes:
             t = self._parse_type()
             assert self._peek() == b"]"
             self._consume(1)
+            self._skip_bitfield()
             return qual + f"{t}[{n}]"
 
         raise NotImplementedError(f"unsupported type '{c}'")
