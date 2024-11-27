@@ -46,7 +46,7 @@ class ObjCEncodedTypes:
     ?   unknown type, also used for function pointers
 
     Special types:
-    @?  block pointer
+    @?  block pointer (undocumented)
     b   bitfield of format:     b num_bits
 
     Nested types:
@@ -64,21 +64,22 @@ class ObjCEncodedTypes:
     R   byref
     V   oneway
 
-    Structure:
+    Structure (this is pure guesswork):
     signature = type_and_stack_size [ ... ]
-    type_and_stack_size = type [ qualifier ] stack_size
-    type = { basic_type | nested_type }
+    type_and_stack_size = type stack_size
+    type = [ qualifier ] { basic_type | nested_type }
     stack_size = number [ ... ]
 
     Caveats:
     Block pointer encoding is undocumented but well-known.
-    Qualifier positioning is a guess, haven't seen this in block types.
+    Qualifier positioning and semantics is guesswork.
+    Qualifiers other than const (r) are ignored.
     Not sure how to disambiguate bitfield width from stack size.
 
     Not implemented:
-    Bitfields, type qualifiers
+    Bitfields
 
-    Hacks:
+    Notable hacks:
     For types that need fallback to id instead of void *, ! is emitted.
     This is useful for emitting more specific types where possible, but
     having a correct fallback where not, e.g. because Binja does not
@@ -95,7 +96,11 @@ class ObjCEncodedTypes:
     >>> ObjCEncodedTypes(b'v32@?0@"<SomeProtocol>"8Q16^B24').ctypes
     ['void', 'void *', '<SomeProtocol> !', 'unsigned long long', 'bool *']
     >>> ObjCEncodedTypes(b'v56@?0@"NSString"8{_NSRange=QQ}16{_NSRange=QQ}32^B48').ctypes
-    ['void', 'void *', 'NSString !', 'void *', 'void *', 'bool *']
+    ['void', 'void *', 'NSString !', 'struct _NSRange', 'struct _NSRange', 'bool *']
+    >>> ObjCEncodedTypes(b'v24@?0{shared_ptr<CLConnectionMessage>=^{CLConnectionMessage}^{__shared_weak_count}}8').ctypes
+    ['void', 'void *', 'void *']
+    >>> ObjCEncodedTypes(b'r^{__CFString=}8@?0').ctypes
+    ['const struct __CFString *', 'void *']
     """
 
     BASIC_TYPE_MAP = {
@@ -138,43 +143,57 @@ class ObjCEncodedTypes:
 
     def _parse(self):
         while self._idx < self._end:
-            t = self._parse_type_code()
+            t = self._parse_type()
             self._parse_number()
             self.ctypes.append(t)
 
-    def _parse_type_code(self):
+    def _parse_type(self):
+        #print(f"_parse_type idx {self._idx} {self._raw[self._idx:]}", file=sys.stderr)
         c = self._peek()
+
+        # qualifiers
+        quals = []
+        if c == b"r":
+            quals.append("const")
+            self._consume(1)
+            c = self._peek()
+        elif c in [b"n", b"N", b"o", b"O", b"R", b"V"]:
+            self._consume(1)
+            c = self._peek()
+        if len(quals) > 0:
+            quals.append("")
+        qual = " ".join(quals)
 
         if c == b"@":
             cc = self._peek(2)
             if cc == b"@?":
                 self._consume(2)
-                return "void *"
+                return qual + "void *"
             elif cc == b"@\"":
                 self._consume(2)
                 classname = self._parse_classname()
                 assert self._peek() == b"\""
                 self._consume(1)
                 if classname[:1] == b"<":
-                    return f"NSObject{classname} !"
+                    return qual + f"NSObject{classname} !"
                 else:
-                    return f"{classname} !"
+                    return qual + f"{classname} !"
             else:
                 self._consume(1)
-                return "id"
+                return qual + "id"
 
         ctype = self.BASIC_TYPE_MAP.get(c, None)
         if ctype is not None:
             self._consume(1)
-            return ctype
+            return qual + ctype
 
         if c == b"^":
             self._consume(1)
-            target_ctype = self._parse_type_code()
+            target_ctype = self._parse_type()
             if target_ctype[-1:] == "*":
-                return target_ctype + "*"
+                return qual + target_ctype + "*"
             else:
-                return target_ctype + " *"
+                return qual + target_ctype + " *"
 
         if c in b"{(":
             if c == b"{":
@@ -182,26 +201,39 @@ class ObjCEncodedTypes:
             else:
                 sentinel = b")"
             self._consume(1)
-            structname = self._parse_structname()
-            assert self._peek() == b"="
-            self._consume(1)
-            member_types = []
-            while (c := self._peek()) is not None and c != sentinel:
-                t = self._parse_type_code()
-                member_types.append(t)
+            structname = self._parse_structname(sentinel)
+            c = self._peek()
+            assert c in [b"=", sentinel]
+            if c == b"=":
+                # has type info
+                self._consume(1)
+                member_types = []
+                while (c := self._peek()) is not None and c != sentinel:
+                    t = self._parse_type()
+                    member_types.append(t)
+            elif c == sentinel:
+                # no type info
+                pass
             assert self._peek() == sentinel
             self._consume(1)
+
             # We could try to construct an anonymous struct or
             # union here, but let's not bother for now.
-            return "void *"
+            if any([structname.startswith(prefix) for prefix in ["shared_ptr<", "unique_ptr<", "weak_ptr<"]]):
+                # C++ smart pointers
+                return qual + "void *"
+            if sentinel == b"}":
+                return qual + f"struct {structname}"
+            else:
+                return qual + f"union {structname}"
 
         if c in b"[":
             self._consume(1)
             n = self._parse_number()
-            t = self._parse_type_code()
+            t = self._parse_type()
             assert self._peek() == b"]"
             self._consume(1)
-            return f"{t}[{n}]"
+            return qual + f"{t}[{n}]"
 
         raise NotImplementedError(f"unsupported type '{c}'")
 
@@ -215,19 +247,19 @@ class ObjCEncodedTypes:
             end += 1
         return self._raw[start:end].decode()
 
-    def _parse_terminated_string(self, sentinel):
+    def _parse_terminated_string(self, sentinels):
         start = self._idx
         end = start
-        while (c := self._peek()) is not None and c != sentinel:
+        while (c := self._peek()) is not None and c not in sentinels:
             self._consume(1)
             end += 1
         return self._raw[start:end].decode()
 
     def _parse_classname(self):
-        return self._parse_terminated_string(b"\"")
+        return self._parse_terminated_string([b"\""])
 
-    def _parse_structname(self):
-        return self._parse_terminated_string(b"=")
+    def _parse_structname(self, sentinel):
+        return self._parse_terminated_string([b"=", sentinel])
 
 
 def _test():

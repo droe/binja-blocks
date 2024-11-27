@@ -375,11 +375,13 @@ class BlockLiteral:
             self._bv.set_comment_at(self.address, f"Block literal of size {bd.size:#x}\nstruct {self.struct_name} of width {self.struct_builder.width:#x}\n{n_unaccounted:#x} bytes missing in struct type\nAdd manually by modifying struct type")
 
     def _type_for_ctype(self, ctype):
-        if '!' in ctype:
+        if ctype.endswith("!"):
             fallback = 'id'
             ctype = ctype.replace("!", "*")
-        else:
+        elif ctype.endswith("*"):
             fallback = 'void *'
+        else:
+            fallback = 'void'
         try:
             return self._bv.parse_type_string(ctype)[0]
         except SyntaxError:
@@ -399,6 +401,15 @@ class BlockLiteral:
         """
         invoke_func = self._bv.get_function_at(self.invoke)
         if bd.signature_raw is not None:
+            # This works well for most blocks, but because Binja does
+            # not seem to support [Apple's variant of] AArch64 calling
+            # conventions properly when things are passed in v registers
+            # or on the stack, signatures are sometimes wrong.  I find
+            # it useful to have them, even if they are sometimes wrong.
+            # The types assigned here should be correct, assuming no
+            # fallbacks to void were required (those may cause size to
+            # be lost, which for structs by value determines if they
+            # get passed in multiple registers or on the stack).
             ctypes = objctypes.ObjCEncodedTypes(bd.signature_raw).ctypes
             assert len(ctypes) > 0
             types = list(map(self._type_for_ctype, ctypes))
@@ -719,7 +730,10 @@ def annotate_stack_block_literal(bv, block_literal_insn):
             bv.define_type(binja.Type.generate_auto_type_id(_TYPE_ID_SOURCE, bl.struct_name), bl.struct_name, bl.struct_builder)
             bl.struct_type = bv.parse_type_string(bl.struct_type_name)[0]
 
-            # XXX annotate functions (hard with use of temporary 128-bit reg)
+            # XXX annotate functions, which is often hard with the use of
+            # callee-saved D/V registers treated as caller-saved in HLIL;
+            # it seems that Binja does not properly deal with the fact that
+            # D8-15 are callee-saved but the rest of V8-15 are caller-saved.
 
     return
 
