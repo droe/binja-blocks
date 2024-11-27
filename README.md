@@ -10,8 +10,8 @@ over and related function signatures in [Binary Ninja](https://binary.ninja/).
 Blocks are an implementation of closures often found in C, C++, ObjC and ObjC++
 code for Apple platforms.  Blocks are not the same as C++ lambdas.
 
-This plugin should be considered experimental and may almost certainly require
-fixes.  PRs and feedback welcome.
+This plugin should be considered experimental and will almost certainly benefit
+from further improvements.  PRs and feedback welcome.
 
 Commands:
 
@@ -33,7 +33,9 @@ Features:
 -   Annotate stack byref fields for non-extended layout
 -   Annotate stack byref fields for extended layout with compact or bytecode layout encodings
 -   Define per-block named structs to allow for manual fixups
--   Define structs for fully manual annotation: `Block_literal`, `Block_descriptor_1`, `Block_descriptor_2`, `Block_descriptor_3`, `Block_byref_1`, `Block_byref_2`, `Block_byref_3`.
+-   Define structs for fully manual annotation: `Block_literal`,
+    `Block_descriptor_1`, `Block_descriptor_2`, `Block_descriptor_3`,
+    `Block_byref_1`, `Block_byref_2`, `Block_byref_3`.
 -   Relevant enums for completeness
 -   Support for 64-bit architectures
 
