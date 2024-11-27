@@ -410,39 +410,43 @@ class BlockLiteral:
         Annotate the invoke function as well as the copy and dispose functions, if they exist.
         """
         invoke_func = self._bv.get_function_at(self.invoke)
-        if bd.signature_raw is not None:
-            # This works well for most blocks, but because Binja does
-            # not seem to support [Apple's variant of] AArch64 calling
-            # conventions properly when things are passed in v registers
-            # or on the stack, signatures are sometimes wrong.  I find
-            # it useful to have them, even if they are sometimes wrong.
-            # The types assigned here should be correct, assuming no
-            # fallbacks to void were required (those may cause size to
-            # be lost, which for structs by value determines if they
-            # get passed in multiple registers or on the stack).
-            ctypes = objctypes.ObjCEncodedTypes(bd.signature_raw).ctypes
-            assert len(ctypes) > 0
-            types = list(map(self._type_for_ctype, ctypes))
-            types[1] = binja.Type.pointer(self._bv.arch, self.struct_type)
-            invoke_func.type = binja.Type.function(types[0], types[1:])
-        else:
-            invoke_func.type = binja.Type.function(binja.Type.void(), [binja.Type.pointer(self._bv.arch, self.struct_type)], variable_arguments=True)
-        if invoke_func.name == f"sub_{invoke_func.start:x}":
-            invoke_func.name = f"sub_{invoke_func.start:x}_block_invoke"
-        invoke_func.reanalyze()
+        if invoke_func is not None:
+            if bd.signature_raw is not None:
+                # This works well for most blocks, but because Binja does
+                # not seem to support [Apple's variant of] AArch64 calling
+                # conventions properly when things are passed in v registers
+                # or on the stack, signatures are sometimes wrong.  I find
+                # it useful to have them, even if they are sometimes wrong.
+                # The types assigned here should be correct, assuming no
+                # fallbacks to void were required (those may cause size to
+                # be lost, which for structs by value determines if they
+                # get passed in multiple registers or on the stack).
+                ctypes = objctypes.ObjCEncodedTypes(bd.signature_raw).ctypes
+                assert len(ctypes) > 0
+                types = list(map(self._type_for_ctype, ctypes))
+                types[1] = binja.Type.pointer(self._bv.arch, self.struct_type)
+                invoke_func.type = binja.Type.function(types[0], types[1:])
+            else:
+                invoke_func.type = binja.Type.function(binja.Type.void(), [binja.Type.pointer(self._bv.arch, self.struct_type)], variable_arguments=True)
+            if invoke_func.name == f"sub_{invoke_func.start:x}":
+                invoke_func.name = f"sub_{invoke_func.start:x}_block_invoke"
+            invoke_func.reanalyze()
 
         if bd.block_has_copy_dispose:
             copy_func = self._bv.get_function_at(bd.copy)
-            copy_func.type = binja.Type.function(binja.Type.void(), [binja.Type.pointer(self._bv.arch, self.struct_type),
-                                                                     binja.Type.pointer(self._bv.arch, self.struct_type)])
-            if copy_func.name == f"sub_{copy_func.start:x}":
-                copy_func.name = f"sub_{copy_func.start:x}_block_copy"
+            if copy_func is not None:
+                copy_func.type = binja.Type.function(binja.Type.void(), [binja.Type.pointer(self._bv.arch, self.struct_type),
+                                                                         binja.Type.pointer(self._bv.arch, self.struct_type)])
+                if copy_func.name == f"sub_{copy_func.start:x}":
+                    copy_func.name = f"sub_{copy_func.start:x}_block_copy"
+                copy_func.reanalyze()
+
             dispose_func = self._bv.get_function_at(bd.dispose)
-            dispose_func.type = binja.Type.function(binja.Type.void(), [binja.Type.pointer(self._bv.arch, self.struct_type)])
-            if dispose_func.name == f"sub_{dispose_func.start:x}":
-                dispose_func.name = f"sub_{dispose_func.start:x}_block_dispose"
-            copy_func.reanalyze()
-            dispose_func.reanalyze()
+            if dispose_func is not None:
+                dispose_func.type = binja.Type.function(binja.Type.void(), [binja.Type.pointer(self._bv.arch, self.struct_type)])
+                if dispose_func.name == f"sub_{dispose_func.start:x}":
+                    dispose_func.name = f"sub_{dispose_func.start:x}_block_dispose"
+                dispose_func.reanalyze()
 
 
 class BlockDescriptor:
