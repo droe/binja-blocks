@@ -291,9 +291,8 @@ class BlockLiteral:
                 assert str(insn.src) == '__NSConcreteStackBlock'
                 isa = insn.src.address
             elif insn.dest.member_index == 1:
-                # This assertion may fail when Binja failed to figure out
-                # that these fields are set to a constant.  We absolutely
-                # do need the flags tho.
+                if isinstance(insn.src, binja.HighLevelILStructField):
+                    raise RuntimeError("RHS of flags is struct field instead of constant.  If d8-d15/v8-v15 then likely because of Binja bug treating them as caller-saved when they are supposed to be callee-saved.")
                 assert isinstance(insn.src, (binja.HighLevelILConst,
                                              binja.HighLevelILConstPtr))
                 flags = insn.src.constant
@@ -626,7 +625,10 @@ def annotate_stack_block_literal(bv, block_literal_insn):
                                            binja.HighLevelILImport,
                                            binja.HighLevelILConst,
                                            binja.HighLevelILConstPtr,
-                                           binja.HighLevelILCall)):
+                                           binja.HighLevelILCall,
+                                           binja.HighLevelILStructField)):
+                    # binja.HighLevelILStructField is typically because of Binja bug
+                    # treating d8-15/v8-15 as caller-saved instead of callee-saved
                     insn_src = None
                 else:
                     print(f"{where}: Skipping assignment right-hand-side for {insn.src!r}, fix plugin", file=sys.stderr)
@@ -686,13 +688,18 @@ def annotate_stack_block_literal(bv, block_literal_insn):
                     # 0 isa
                     # 1 forwarding
                     if insn.dest.member_index == 2:
-                        assert isinstance(insn.src, binja.HighLevelILConst)
-                        byref_flags = insn.src.constant
+                        if isinstance(insn.src, (binja.HighLevelILConst,
+                                                 binja.HighLevelILConstPtr)):
+                            byref_flags = insn.src.constant
                     elif insn.dest.member_index == 3:
-                        assert isinstance(insn.src, binja.HighLevelILConst)
-                        byref_size = insn.src.constant
-
-                print(f"Block byref at {byref_insn.address:x} flags {byref_flags:08x} size {byref_size:#x}")
+                        if isinstance(insn.src, (binja.HighLevelILConst,
+                                                 binja.HighLevelILConstPtr)):
+                            byref_size = insn.src.constant
+                try:
+                    print(f"Block byref at {byref_insn.address:x} flags {byref_flags:08x} size {byref_size:#x}")
+                except UnboundLocalError as e:
+                    print(f"Block byref at {byref_insn.address:x} failed to find flags or size assignments", file=sys.stderr)
+                    continue
 
                 if (byref_flags & BLOCK_BYREF_HAS_COPY_DISPOSE) != 0:
                     byref_struct.append(_get_libclosure_type(bv, "BlockByrefKeepFunction"), "byref_keep")
@@ -706,7 +713,8 @@ def annotate_stack_block_literal(bv, block_literal_insn):
                     byref_insn_var = byref_insn.var
                     for insn in shinobi.yield_struct_field_assign_hlil_instructions_for_var_id(byref_insn.function, byref_insn_var.identifier):
                         if insn.dest.member_index == layout_index:
-                            isinstance(insn.src, binja.HighLevelILConstPtr)
+                            assert isinstance(insn.src, (binja.HighLevelILConst,
+                                                         binja.HighLevelILConstPtr))
                             byref_layout = insn.src.constant
                             break
                     if byref_layout != 0:
