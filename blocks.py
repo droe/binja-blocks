@@ -420,13 +420,20 @@ class BlockLiteral:
                 # fallbacks to void were required (those may cause size to
                 # be lost, which for structs by value determines if they
                 # get passed in multiple registers or on the stack).
-                ctypes = objctypes.ObjCEncodedTypes(bd.signature_raw).ctypes
-                assert len(ctypes) > 0
-                types = list(map(self._type_for_ctype, ctypes))
-                types[1] = binja.Type.pointer(self._bv.arch, self.struct_type)
-                invoke_func.type = binja.Type.function(types[0], types[1:])
+                try:
+                    ctypes = objctypes.ObjCEncodedTypes(bd.signature_raw).ctypes
+                    assert len(ctypes) > 0
+                    types = list(map(self._type_for_ctype, ctypes))
+                    types[1] = binja.Type.pointer(self._bv.arch, self.struct_type)
+                    func_type = binja.Type.function(types[0], types[1:])
+                except NotImplementedError as e:
+                    print(f"Failed to parse ObjC type encoding {bd.signature_raw!r}: {type(e).__name__}: {e}", file=sys.stderr)
+                    func_type = None
             else:
-                invoke_func.type = binja.Type.function(binja.Type.void(), [binja.Type.pointer(self._bv.arch, self.struct_type)], variable_arguments=True)
+                func_type = None
+            if func_type is None:
+                func_type = binja.Type.function(binja.Type.void(), [binja.Type.pointer(self._bv.arch, self.struct_type)], variable_arguments=True)
+            invoke_func.type = func_type
             if invoke_func.name == f"sub_{invoke_func.start:x}":
                 invoke_func.name = f"sub_{invoke_func.start:x}_block_invoke"
             invoke_func.reanalyze()
