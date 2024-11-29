@@ -136,6 +136,12 @@ class ObjCEncodedTypes:
     ['void', 'void *', 'void *']
     >>> ObjCEncodedTypes(b'v24@?0{time_point<cl::chrono::CFAbsoluteTimeClock, std::chrono::duration<long double>>={duration<long double, std::ratio<1>>=D}}8r^v16').ctypes
     ['void', 'void *', 'struct time_point<cl::chrono::CFAbsoluteTimeClock, std::chrono::duration<long double>>', 'const void *']
+    >>> ObjCEncodedTypes(b'v28@?0^{_launch_domain_io_s={_launch_obj_header_s=^vB}{?=*{_xpc_token_s=IIIIIiii}Q^{dispatch_queue_s}@?@?^{_launch_array_s}ICb1}}8^{_launch_io_s={_launch_obj_header_s=^vB}{?={_xpc_token_s=IIIIIiii}Q}{?=C*^{dispatch_data_s}^{_xpc_bundle_s}^v{stat=iSSQIIi{timespec=qq}{timespec=qq}{timespec=qq}{timespec=qq}qqiIIi[2q]}i^{dispatch_queue_s}@?b1b1b1}}16i24').ctypes
+    ['void', 'void *', 'struct _launch_domain_io_s *', 'struct _launch_io_s *', 'int']
+    >>> ObjCEncodedTypes(b'v20@?0^{_launch_io_s={_launch_obj_header_s=^vB}{?={_xpc_token_s=IIIIIiii}Q}{?=C*^{dispatch_data_s}^{_xpc_bundle_s}^v{stat=iSSQIIi{timespec=qq}{timespec=qq}{timespec=qq}{timespec=qq}qqiIIi[2q]}i^{dispatch_queue_s}@?b1b1b1}}8i16').ctypes
+    ['void', 'void *', 'struct _launch_io_s *', 'int']
+    >>> ObjCEncodedTypes(b'v28@?0^{_launch_domain_io_s={_launch_obj_header_s=^vB}{?=*{_xpc_token_s=IIIIIiii}Q^{dispatch_queue_s}@?@?^{_launch_array_s}ICb1}}8^{_launch_io_s={_launch_obj_header_s=^vB}{?={_xpc_token_s=IIIIIiii}Q}{?=C*^{dispatch_data_s}^{_xpc_bundle_s}^v{stat=iSSQIIi{timespec=qq}{timespec=qq}{timespec=qq}{timespec=qq}qqiIIi[2q]}i^{dispatch_queue_s}@?b1b1b1}}16i24').ctypes
+    ['void', 'void *', 'struct _launch_domain_io_s *', 'struct _launch_io_s *', 'int']
     """
 
     BASIC_TYPE_MAP = {
@@ -194,11 +200,9 @@ class ObjCEncodedTypes:
         return ctypes
 
     def _skip_bitfield(self):
-        c = self._peek()
-        while c == b"b":
+        while self._peek() == b"b":
             self._consume(1)
             _ = self._parse_number()
-            c = self._peek()
 
     def _parse_type(self):
         #print(f"_parse_type idx {self._idx} {self._raw[self._idx:]}", file=sys.stderr)
@@ -226,18 +230,21 @@ class ObjCEncodedTypes:
                     _ = self._parse_signature()
                     assert self._peek() == b">"
                     self._consume(1)
+                self._skip_bitfield()
                 return qual + "void *"
             elif cc == b"@\"":
                 self._consume(2)
                 classname = self._parse_classname()
                 assert self._peek() == b"\""
                 self._consume(1)
+                self._skip_bitfield()
                 if classname[:1] == b"<":
                     return qual + f"NSObject{classname} !"
                 else:
                     return qual + f"{classname} !"
             else:
                 self._consume(1)
+                self._skip_bitfield()
                 return qual + "id"
 
         ctype = self.BASIC_TYPE_MAP.get(c, None)
