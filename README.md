@@ -27,7 +27,7 @@ Features:
 -   Annotate stack blocks
 -   Annotate block imported variables for extended layout with compact or bytecode layout encodings
 -   Annotate block descriptors
--   Annotate block invoke function type based on encoded block signature
+-   Annotate block invoke function type based on encoded block ObjC type signature
 -   Annotate block copy and dispose functions
 -   Annotate stack byrefs
 -   Annotate stack byref fields for non-extended layout
@@ -41,6 +41,7 @@ Features:
 
 Planned improvements, PRs welcome:
 
+-   Allow re-annotating already annotated blocks, e.g. after partial failure or manual changes
 -   Annotate block imported variables for non-extended layout
 -   Plugin command to annotate byrefs manually more conveniently than annotating the type
 
