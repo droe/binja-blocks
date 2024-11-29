@@ -35,8 +35,11 @@ class ObjCEncodedTypes:
     S   unsigned short
     L   unsigned long
     Q   unsigned long long
+    t   int128_t (undocumented)
+    T   uint128_t (undocumented)
     f   float
     d   double
+    D   long double (undocumented)
     B   bool (C++/C)
     v   void
     *   char *
@@ -44,10 +47,13 @@ class ObjCEncodedTypes:
     #   ObjC class object
     :   ObjC method selector
     ?   unknown type, also used for function pointers
+    ' ' not implemented by LLVM (undocumented)
 
     Special types:
-    @?  block pointer (undocumented)
     b   bitfield of format:     b num_bits
+    @?  block pointer (undocumented)
+        optionally followed by full block signature
+        < ret-val-type @? param-type ... >
 
     Nested types:
     []  array of format:        [ num_elements type ]
@@ -56,13 +62,26 @@ class ObjCEncodedTypes:
     ^   pointer of format:      ^ target_type
 
     Type qualifiers:
-    r   const
+    r   const (read-only)
     n   in
     N   inout
     o   out
     O   bycopy
     R   byref
     V   oneway
+
+    Property encodings:
+    R   read-only
+    C   by-copy
+    &   by-reference
+    D   dynamic
+    G   getter                  G selector
+    S   setter                  S selector
+    V   instance variable       V var name
+    T   type encoding           T old-style type encoding
+    W   weak
+    P   strong
+    N   non-atomic
 
     Structure (this is pure guesswork):
     signature = type_and_stack_size [ ... ]
@@ -111,24 +130,12 @@ class ObjCEncodedTypes:
     ['struct MonitoredRegion', 'void *']
     >>> ObjCEncodedTypes(b'{Name={basic_string<char, std::char_traits<char>, std::allocator<char>>={__compressed_pair<std::basic_string<char>::__rep, std::allocator<char>>={__rep=(?={__long=*Qb63b1}{__short=[23c][0C]b7b1}{__raw=[3Q]})}}}{basic_string<char, std::char_traits<char>, std::allocator<char>>={__compressed_pair<std::basic_string<char>::__rep, std::allocator<char>>={__rep=(?={__long=*Qb63b1}{__short=[23c][0C]b7b1}{__raw=[3Q]})}}}{basic_string<char, std::char_traits<char>, std::allocator<char>>={__compressed_pair<std::basic_string<char>::__rep, std::allocator<char>>={__rep=(?={__long=*Qb63b1}{__short=[23c][0C]b7b1}{__raw=[3Q]})}}}{basic_string<char, std::char_traits<char>, std::allocator<char>>={__compressed_pair<std::basic_string<char>::__rep, std::allocator<char>>={__rep=(?={__long=*Qb63b1}{__short=[23c][0C]b7b1}{__raw=[3Q]})}}}{basic_string<char, std::char_traits<char>, std::allocator<char>>={__compressed_pair<std::basic_string<char>::__rep, std::allocator<char>>={__rep=(?={__long=*Qb63b1}{__short=[23c][0C]b7b1}{__raw=[3Q]})}}}BBB{basic_string<char, std::char_traits<char>, std::allocator<char>>={__compressed_pair<std::basic_string<char>::__rep, std::allocator<char>>={__rep=(?={__long=*Qb63b1}{__short=[23c][0C]b7b1}{__raw=[3Q]})}}}{basic_string<char, std::char_traits<char>, std::allocator<char>>={__compressed_pair<std::basic_string<char>::__rep, std::allocator<char>>={__rep=(?={__long=*Qb63b1}{__short=[23c][0C]b7b1}{__raw=[3Q]})}}}{basic_string<char, std::char_traits<char>, std::allocator<char>>={__compressed_pair<std::basic_string<char>::__rep, std::allocator<char>>={__rep=(?={__long=*Qb63b1}{__short=[23c][0C]b7b1}{__raw=[3Q]})}}}BBB}8@?0').ctypes
     ['struct Name', 'void *']
-
-    These use undocumented syntax @?<...> and currently fail to parse:
-
-    >>> ObjCEncodedTypes(b'v20@?0B8@?<{CLDaemonLocation=i{?=dd}ddddddddidi{?=dd}diIiiidB}@?>12')
-    Traceback (most recent call last):
-        ...
-    NotImplementedError
-    >>> ObjCEncodedTypes(b'v16@?0@?<{vector<CLFenceManager_Type::Fence, std::allocator<CLFenceManager_Type::Fence>>=^{Fence}^{Fence}{__compressed_pair<CLFenceManager_Type::Fence *, std::allocator<CLFenceManager_Type::Fence>>=^{Fence}}}@?>8')
-    Traceback (most recent call last):
-        ...
-    NotImplementedError
-
-    This one uses undocumented syntax D and currently fails to parse:
-
+    >>> ObjCEncodedTypes(b'v20@?0B8@?<{CLDaemonLocation=i{?=dd}ddddddddidi{?=dd}diIiiidB}@?>12').ctypes
+    ['void', 'void *', 'bool', 'void *']
+    >>> ObjCEncodedTypes(b'v16@?0@?<{vector<CLFenceManager_Type::Fence, std::allocator<CLFenceManager_Type::Fence>>=^{Fence}^{Fence}{__compressed_pair<CLFenceManager_Type::Fence *, std::allocator<CLFenceManager_Type::Fence>>=^{Fence}}}@?>8').ctypes
+    ['void', 'void *', 'void *']
     >>> ObjCEncodedTypes(b'v24@?0{time_point<cl::chrono::CFAbsoluteTimeClock, std::chrono::duration<long double>>={duration<long double, std::ratio<1>>=D}}8r^v16').ctypes
-    Traceback (most recent call last):
-        ...
-    NotImplementedError
+    ['void', 'void *', 'struct time_point<cl::chrono::CFAbsoluteTimeClock, std::chrono::duration<long double>>', 'const void *']
     """
 
     BASIC_TYPE_MAP = {
@@ -142,23 +149,29 @@ class ObjCEncodedTypes:
         b"S": "unsigned short",
         b"L": "unsigned long",
         b"Q": "unsigned long long",
+        b"t": "int128_t",
+        b"T": "uint128_t",
         b"f": "float",
         b"d": "double",
+        b"D": "long double",
         b"B": "bool",
         b"v": "void",
         b"*": "char *",
         b"#": "Class",
         b":": "SEL",
         b"?": "void *",
+        b" ": "void",
     }
 
     def __init__(self, raw):
         self._raw = raw
         self._idx = 0
-        self.ctypes = []
         if len(raw) > 0:
             self._end = len(raw)
-            self._parse()
+            self.ctypes = self._parse_signature()
+            assert self._idx == self._end
+        else:
+            self.ctypes = []
 
     def _peek(self, n=1):
         if self._idx + n <= self._end:
@@ -169,11 +182,16 @@ class ObjCEncodedTypes:
         self._idx += n
         assert self._idx <= self._end
 
-    def _parse(self):
+    def _parse_signature(self):
+        #print(f"_parse_signature idx {self._idx} {self._raw[self._idx:]}", file=sys.stderr)
+        ctypes = []
         while self._idx < self._end:
+            if self._peek() == b">":
+                break
             t = self._parse_type()
             self._parse_number()
-            self.ctypes.append(t)
+            ctypes.append(t)
+        return ctypes
 
     def _skip_bitfield(self):
         c = self._peek()
@@ -203,6 +221,11 @@ class ObjCEncodedTypes:
             cc = self._peek(2)
             if cc == b"@?":
                 self._consume(2)
+                if self._peek() == b"<":
+                    self._consume(1)
+                    _ = self._parse_signature()
+                    assert self._peek() == b">"
+                    self._consume(1)
                 return qual + "void *"
             elif cc == b"@\"":
                 self._consume(2)
