@@ -281,21 +281,33 @@ class BlockLiteral:
         return cls(bv, is_stack_block, bl_data_var, isa, flags, reserved, invoke, descriptor)
 
     @classmethod
-    def from_stack(cls, bv, bl_insn):
+    def from_stack(cls, bv, bl_insn, bl_var):
         is_stack_block = True
-        bl_insn.dest.type = _get_libclosure_type(bv, "Block_literal")
+        bl_var.type = _get_libclosure_type(bv, "Block_literal")
         bl_insn = shinobi.reload_hlil_instruction(bv, bl_insn)
-        for insn in shinobi.yield_struct_field_assign_hlil_instructions_for_var_id(bl_insn.function, bl_insn.var.identifier):
+
+        if isinstance(bl_insn, binja.HighLevelILVarDeclare):
+            stack_var_id = bl_insn.var.identifier
+        elif isinstance(bl_insn, binja.HighLevelILVarInit):
+            stack_var_id = bl_insn.dest.identifier
+        elif isinstance(bl_insn, binja.HighLevelILAssign):
+            if isinstance(bl_insn.dest, binja.HighLevelILStructField):
+                stack_var_id = bl_insn.dest.src.var.identifier
+            else:
+                raise RuntimeError(f"bl_insn.dest after reload is unexpected type {type(bl_insn.dest).__name__}")
+        else:
+            raise RuntimeError(f"bl_insn after reload is unexpected type {type(bl_insn).__name__}")
+
+        for insn in shinobi.yield_struct_field_assign_hlil_instructions_for_var_id(bl_insn.function, stack_var_id):
             if insn.dest.member_index == 0:
-                assert isinstance(insn.src, binja.HighLevelILImport)
-                assert str(insn.src) == '__NSConcreteStackBlock'
-                isa = insn.src.address
+                if isinstance(insn.src, binja.HighLevelILImport) and str(insn.src) == '__NSConcreteStackBlock':
+                    isa = insn.src.address
             elif insn.dest.member_index == 1:
                 if isinstance(insn.src, binja.HighLevelILStructField):
                     raise RuntimeError("RHS of flags is struct field instead of constant.  If d8-d15/v8-v15 then likely because of Binja bug treating them as caller-saved when they are supposed to be callee-saved.")
-                assert isinstance(insn.src, (binja.HighLevelILConst,
-                                             binja.HighLevelILConstPtr))
-                flags = insn.src.constant
+                if isinstance(insn.src, (binja.HighLevelILConst,
+                                         binja.HighLevelILConstPtr)):
+                    flags = insn.src.constant
             elif insn.dest.member_index == 2:
                 if isinstance(insn.src, (binja.HighLevelILConst,
                                          binja.HighLevelILConstPtr)):
@@ -303,13 +315,13 @@ class BlockLiteral:
                 else:
                     reserved = None
             elif insn.dest.member_index == 3:
-                assert isinstance(insn.src, (binja.HighLevelILConst,
-                                             binja.HighLevelILConstPtr))
-                invoke = insn.src.constant
+                if isinstance(insn.src, (binja.HighLevelILConst,
+                                         binja.HighLevelILConstPtr)):
+                    invoke = insn.src.constant
             elif insn.dest.member_index == 4:
-                assert isinstance(insn.src, (binja.HighLevelILConst,
-                                             binja.HighLevelILConstPtr))
-                descriptor = insn.src.constant
+                if isinstance(insn.src, (binja.HighLevelILConst,
+                                         binja.HighLevelILConstPtr)):
+                    descriptor = insn.src.constant
             else:
                 # We don't know if the members are assigned in-order,
                 # so we cannot rely on having descriptor and hence
@@ -317,6 +329,9 @@ class BlockLiteral:
                 # up imported variables here.  We'll need another pass
                 # for that later.
                 pass
+            local_vars = locals()
+            if all([vn in local_vars for vn in ('isa', 'flags', 'reserved', 'invoke', 'descriptor')]):
+                break
         return cls(bv, is_stack_block, bl_insn, isa, flags, reserved, invoke, descriptor)
 
     def __init__(self, bv, is_stack_block, insn_or_data_var, isa, flags, reserved, invoke, descriptor):
@@ -371,9 +386,29 @@ class BlockLiteral:
         self.struct_type = self._bv.parse_type_string(self.struct_type_name)[0]
         assert self.struct_type is not None
         if self.is_stack_block:
-            assert isinstance(self.insn, binja.HighLevelILVarDeclare)
-            self.insn.var.name = f"stack_block_{self.insn.var.name}"
-            self.insn.var.type = self.struct_type_name
+            if isinstance(self.insn, binja.HighLevelILVarDeclare):
+                stack_var = self.insn.var
+            elif isinstance(self.insn, binja.HighLevelILAssign):
+                if isinstance(self.insn.dest, binja.HighLevelILStructField):
+                    stack_var = self.insn.dest.src.var
+                else:
+                    raise RuntimeError(f"self.insn.dest is unexpected type {type(self.insn.dest).__name__}")
+            else:
+                raise RuntimeError(f"self.insn is unexpected type {type(self.insn).__name__}")
+            stack_var_type_name = str(stack_var.type)
+            if stack_var_type_name.startswith("struct Block_literal_") and stack_var_type_name != self.struct_type_name:
+                # Stack var has already been annotated for initialization code
+                # at a different address, likely because multiple branches in
+                # the function place a block at the same stack address.
+                # Unfortunately, this seems to be a hypothetical situation
+                # right now, as Binja does not seem to handle different use of
+                # the same stack area by different branches gracefully.
+                self._bv.set_comment_at(self.address, f"Apple Blocks Plugin:\nStack var {stack_var.name} already annotated with type {stack_var_type_name}.\nDefined {self.struct_type_name} but did not clobber var type.\nSplitting the stack var might help here.")
+                return
+
+            if not stack_var.name.startswith("stack_block_"):
+                stack_var.name = f"stack_block_{stack_var.name}"
+            stack_var.type = self.struct_type_name
             self.insn = shinobi.reload_hlil_instruction(self._bv, self.insn)
         else:
             self.data_var.name = f"global_block_{self.address:x}"
@@ -382,7 +417,7 @@ class BlockLiteral:
         if self.struct_builder.width < bd.size:
             # XXX try to pick up imported vars automatically
             n_unaccounted = bd.size - struct.width
-            self._bv.set_comment_at(self.address, f"Block literal of size {bd.size:#x}\nstruct {self.struct_name} of width {self.struct_builder.width:#x}\n{n_unaccounted:#x} bytes missing in struct type\nAdd manually by modifying struct type")
+            self._bv.set_comment_at(self.address, f"Apple Blocks Plugin:\nBlock literal nominal size {bd.size:x}h.\n{self.struct_type_name} has width {self.struct_builder.width:x}h.\n{n_unaccounted:x}h bytes missing, add to struct manually.")
 
     def _type_for_ctype(self, ctype):
         if ctype.endswith("!"):
@@ -399,7 +434,7 @@ class BlockLiteral:
             return self._bv.parse_type_string(fallback)[0]
 
     def annotate_layout_bytecode(self, bd):
-        if bd.block_has_extended_layout and bd.layout >= 0x1000:
+        if bd.block_has_signature and bd.block_has_extended_layout and bd.layout >= 0x1000:
             n = bd.layout_end - bd.layout
             shinobi.make_data_var(self._bv,
                                   bd.layout,
@@ -484,8 +519,6 @@ class BlockDescriptor:
             else:
                 self.signature_raw = None
             self.layout = br.read64()
-            if self.layout != 0 and not self.block_has_extended_layout:
-                print(f"Warning: {self.address:x}: BLOCK_HAS_EXTENDED_LAYOUT unset, non-extended layout not supported yet", file=sys.stderr)
 
     @property
     def imported_variables_size(self):
@@ -588,7 +621,7 @@ def annotate_global_block_literal(bv, block_literal_addr):
         bl.annotate_layout_bytecode(bd)
         bl.annotate_functions(bd)
     except Exception as e:
-        print(f"{where}: {type(e).__name__} {e}\n{traceback.format_exc()}", file=sys.stderr)
+        print(f"{where}: {type(e).__name__}: {e}\n{traceback.format_exc()}", file=sys.stderr)
         return
 
 
@@ -597,14 +630,39 @@ def annotate_stack_block_literal(bv, block_literal_insn):
 
     print(f"Annotating {where}")
 
-    # XXX also check for __NSConcreteStackBlock here in case we got here via manual command
-    if not (isinstance(block_literal_insn, binja.HighLevelILVarInit) and \
-            (block_literal_insn.dest.source_type == binja.VariableSourceType.StackVariableSourceType)):
-        print(f"{where}: Instruction is not a stack variable initialization", file=sys.stderr)
+    if isinstance(block_literal_insn, binja.HighLevelILVarInit):
+        # The most common case where Binja knows nothing about the stack
+        # variable.  The initialization with __NSConcreteStackBlock is a
+        # HighLevelILVarInit.
+        block_literal_var = block_literal_insn.dest
+        isa_src = block_literal_insn.src
+    elif isinstance(block_literal_insn, binja.HighLevelILAssign):
+        # Sometimes use of the block in subsequent APIs with known signature
+        # (e.g. __Block_copy) causes Binja to create a stack var at the stack
+        # address of the block literal.  The initialization with
+        # __NSConcreteStackBlock is a HighLevelILAssign.
+        if isinstance(block_literal_insn.dest, binja.HighLevelILStructField):
+            block_literal_var = block_literal_insn.dest.src.var
+        elif isinstance(block_literal_insn.dest, binja.HighLevelILVar):
+            block_literal_var = block_literal_insn.dest.var
+        else:
+            print(f"{where}: Assignment is not to a var or to a struct field", file=sys.stderr)
+            return
+        isa_src = block_literal_insn.src
+    else:
+        print(f"{where}: Instruction is neither a var init nor an assign", file=sys.stderr)
+        return
+
+    if block_literal_var.source_type != binja.VariableSourceType.StackVariableSourceType:
+        print(f"{where}: Assignment is not to a stack variable (var source_type is {block_literal_var.source_type!r})", file=sys.stderr)
+        return
+
+    if not isinstance(isa_src, binja.HighLevelILImport) or str(isa_src) != '__NSConcreteStackBlock':
+        print(f"{where}: RHS is not HighLevelILImport of __NSConcreteStackBlock", file=sys.stderr)
         return
 
     try:
-        bl = BlockLiteral.from_stack(bv, block_literal_insn)
+        bl = BlockLiteral.from_stack(bv, block_literal_insn, block_literal_var)
         print(bl)
         bd = BlockDescriptor(bv, bl.descriptor, bl.flags)
         print(bd)
@@ -613,7 +671,7 @@ def annotate_stack_block_literal(bv, block_literal_insn):
         bl.annotate_layout_bytecode(bd)
         bl.annotate_functions(bd)
     except Exception as e:
-        print(f"{where}: {type(e).__name__} {e}\n{traceback.format_exc()}", file=sys.stderr)
+        print(f"{where}: {type(e).__name__}: {e}\n{traceback.format_exc()}", file=sys.stderr)
         return
 
     # XXX refactor byref handling
@@ -767,7 +825,7 @@ def annotate_stack_block_literal(bv, block_literal_insn):
                 # D8-15 are callee-saved but the rest of V8-15 are caller-saved.
 
     except Exception as e:
-        print(f"{where}: {type(e).__name__} {e}\n{traceback.format_exc()}", file=sys.stderr)
+        print(f"{where}: {type(e).__name__}: {e}\n{traceback.format_exc()}", file=sys.stderr)
         return
 
 

@@ -51,14 +51,14 @@ Planned improvements, PRs welcome:
     unless they can be pulled from some type archive
 -   Allow re-annotating already annotated blocks, e.g. after partial failure or
     manual changes
--   Annotate block imported variables for non-extended layout
 -   Plugin command to annotate byrefs manually more conveniently than
     annotating the type
+-   Annotate byref block keep and destroy functions
 
 Less likely to get implemented, but PRs welcome:
 
 -   Support for 32-bit architectures
--   Annotate byref block keep and destroy functions
+-   Support older block layout from before the introduction of block descriptors
 -   Discover and annotate block stack unwind handlers
 -   Find and annotate byrefs passed as arguments
 
