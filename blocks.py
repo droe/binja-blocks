@@ -397,7 +397,7 @@ class BlockLiteral:
             return self._bv.parse_type_string(fallback)[0]
 
     def annotate_layout_bytecode(self, bd):
-        if bd.layout >= 0x1000 and bd.block_has_extended_layout:
+        if bd.block_has_extended_layout and bd.layout >= 0x1000:
             n = bd.layout_end - bd.layout
             shinobi.make_data_var(self._bv,
                                   bd.layout,
