@@ -47,7 +47,7 @@ class ObjCEncodedTypes:
     #   ObjC class object
     :   ObjC method selector
     ?   unknown type, also used for function pointers
-    ' ' not implemented by LLVM (undocumented)
+   ' '  not implemented by LLVM (undocumented)
 
     Special types:
     b   bitfield of format:     b num_bits
@@ -90,17 +90,21 @@ class ObjCEncodedTypes:
     stack_size = number [ ... ]
 
     Caveats:
-    Block pointer encoding is undocumented but well-known.
     Qualifier positioning and semantics is guesswork.
     Qualifiers other than const (r) are ignored.
-    Not sure how to disambiguate bitfield width from stack size.
-    Bitfields are ignored.
+    Bitfields are ignored, i.e. only the type they apply to is emitted,
+    not the fact that the type is split into multiple subranges of bits.
+    Property encodings are not implemented (apparently not needed for blocks).
 
     Notable hacks:
     For types that need fallback to id instead of void *, ! is emitted.
     This is useful for emitting more specific types where possible, but
     having a correct fallback where not, e.g. because Binja does not
     know about a class or protocol.
+
+    References:
+    https://developer.apple.com/library/archive/documentation/Cocoa/Conceptual/ObjCRuntimeGuide/Articles/ocrtTypeEncodings.html
+    https://github.com/llvm-mirror/clang/blob/master/lib/AST/ASTContext.cpp
 
     >>> ObjCEncodedTypes(b"v8@?0").ctypes
     ['void', 'void *']
