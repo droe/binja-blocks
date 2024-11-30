@@ -683,9 +683,7 @@ def annotate_stack_block_literal(bv, block_literal_insn):
             byref_srcs = []
             byref_indexes_set = set(bl.byref_indexes)
             for insn in shinobi.yield_struct_field_assign_hlil_instructions_for_var_id(bl.insn.function, bl.insn.var.identifier):
-                if isinstance(insn.src, binja.HighLevelILVar):
-                    insn_src = insn.src
-                elif isinstance(insn.src, binja.HighLevelILAddressOf):
+                if isinstance(insn.src, binja.HighLevelILAddressOf):
                     insn_src = insn.src
                 elif isinstance(insn.src, (binja.HighLevelILDerefField,
                                            binja.HighLevelILDeref,
@@ -693,9 +691,11 @@ def annotate_stack_block_literal(bv, block_literal_insn):
                                            binja.HighLevelILConst,
                                            binja.HighLevelILConstPtr,
                                            binja.HighLevelILCall,
-                                           binja.HighLevelILStructField)):
+                                           binja.HighLevelILStructField,
+                                           binja.HighLevelILVar)):
                     # binja.HighLevelILStructField is typically because of Binja bug
-                    # treating d8-15/v8-15 as caller-saved instead of callee-saved
+                    # treating d8-15/v8-15 as caller-saved instead of callee-saved.
+                    # binja.HighLevelILVar is typically a byref passed as argument.
                     insn_src = None
                 else:
                     print(f"{where}: Skipping assignment right-hand-side for {insn.src!r}, fix plugin", file=sys.stderr)
@@ -707,11 +707,9 @@ def annotate_stack_block_literal(bv, block_literal_insn):
             for byref_src, byref_member_index in byref_srcs:
                 if byref_src is None:
                     continue
+                assert isinstance(byref_src, binja.HighLevelILAddressOf)
                 if isinstance(byref_src.src, binja.HighLevelILVar):
                     var_id = byref_src.src.var.identifier
-                elif isinstance(byref_src.src, binja.HighLevelILAdd):
-                    print(f"{where}: Byref src var {byref_src} src is HighLevelILAdd: Annotate manually", file=sys.stderr)
-                    continue
                 else:
                     print(f"{where}: Byref src var {byref_src} src is {type(byref_src.src).__name__}: Annotate manually", file=sys.stderr)
                     continue
