@@ -65,7 +65,12 @@ def register_for_high_level_il_instruction(label, *args, **kvargs):
 class Task(binja.plugin.BackgroundTaskThread):
     """
     Helper class to run an analysis on a background thread.
+    Only one task can be running at a given time; additional
+    tasks are queued until the running task has finished.
     """
+
+    _running = None
+    _waiting = []
 
     def __init__(self, label, func, *args, **kvargs):
         super().__init__(label, False)
@@ -80,11 +85,21 @@ class Task(binja.plugin.BackgroundTaskThread):
     def run(self):
         self._func(*self._args, **(self._kvargs | {'set_progress': self.set_progress}))
         self.finish()
+        assert Task._running == self
+        if len(Task._waiting) > 0:
+            Task._running = Task._waiting.pop(0)
+            Task._running.start()
+        else:
+            Task._running = None
 
     @classmethod
     def spawn(cls, label, func, *args, **kvargs):
         task = cls(label, func, *args, **kvargs)
-        task.start()
+        if Task._running is not None:
+            Task._waiting.append(task)
+        else:
+            Task._running = task
+            Task._running.start()
 
 
 def background_task(label="Plugin action"):
