@@ -106,45 +106,84 @@ class ObjCEncodedTypes:
     https://developer.apple.com/library/archive/documentation/Cocoa/Conceptual/ObjCRuntimeGuide/Articles/ocrtTypeEncodings.html
     https://github.com/llvm-mirror/clang/blob/master/lib/AST/ASTContext.cpp
 
-    >>> ObjCEncodedTypes(b"v8@?0").ctypes
+    >>> o = ObjCEncodedTypes(b"v8@?0")
+    >>> o.ctypes
     ['void', 'void *']
-    >>> ObjCEncodedTypes(b"v32@?0@8@16^B24").ctypes
+
+    >>> o = ObjCEncodedTypes(b"v32@?0@8@16^B24")
+    >>> o.ctypes
     ['void', 'void *', 'id', 'id', 'bool *']
-    >>> ObjCEncodedTypes(b"[12^f]").ctypes
+
+    >>> o = ObjCEncodedTypes(b"[12^f]")
+    >>> o.ctypes
     ['float *[12]']
-    >>> ObjCEncodedTypes(b'v32@?0@"NSURL"8@"NSURLResponse"16@"NSError"24').ctypes
+
+    >>> o = ObjCEncodedTypes(b'v32@?0@"NSURL"8@"NSURLResponse"16@"NSError"24')
+    >>> o.ctypes
     ['void', 'void *', 'NSURL !', 'NSURLResponse !', 'NSError !']
-    >>> ObjCEncodedTypes(b'v32@?0@"<SomeProtocol>"8Q16^B24').ctypes
+
+    >>> o = ObjCEncodedTypes(b'v32@?0@"<SomeProtocol>"8Q16^B24')
+    >>> o.ctypes
     ['void', 'void *', '<SomeProtocol> !', 'unsigned long long', 'bool *']
-    >>> ObjCEncodedTypes(b'v56@?0@"NSString"8{_NSRange=QQ}16{_NSRange=QQ}32^B48').ctypes
+
+    >>> o = ObjCEncodedTypes(b'v56@?0@"NSString"8{_NSRange=QQ}16{_NSRange=QQ}32^B48')
+    >>> o.ctypes
     ['void', 'void *', 'NSString !', 'struct _NSRange', 'struct _NSRange', 'bool *']
-    >>> ObjCEncodedTypes(b'v24@?0{shared_ptr<CLConnectionMessage>=^{CLConnectionMessage}^{__shared_weak_count}}8').ctypes
+
+    >>> o = ObjCEncodedTypes(b'v24@?0{shared_ptr<CLConnectionMessage>=^{CLConnectionMessage}^{__shared_weak_count}}8')
+    >>> o.ctypes
     ['void', 'void *', 'void *']
-    >>> ObjCEncodedTypes(b'r^{__CFString=}8@?0').ctypes
+
+    >>> o = ObjCEncodedTypes(b'r^{__CFString=}8@?0')
+    >>> o.ctypes
     ['const struct __CFString *', 'void *']
-    >>> ObjCEncodedTypes(b'{PersistentSubscriptionIdentifier={basic_string<char, std::char_traits<char>, std::allocator<char>>={__compressed_pair<std::basic_string<char>::__rep, std::allocator<char>>={__rep=(?={__long=*Qb63b1}{__short=[23c][0C]b7b1}{__raw=[3Q]})}}}{basic_string<char, std::char_traits<char>, std::allocator<char>>={__compressed_pair<std::basic_string<char>::__rep, std::allocator<char>>={__rep=(?={__long=*Qb63b1}{__short=[23c][0C]b7b1}{__raw=[3Q]})}}}{type_index=^{type_info}}}8@?0').ctypes
+
+    >>> o = ObjCEncodedTypes(b'{PersistentSubscriptionIdentifier={basic_string<char, std::char_traits<char>, std::allocator<char>>={__compressed_pair<std::basic_string<char>::__rep, std::allocator<char>>={__rep=(?={__long=*Qb63b1}{__short=[23c][0C]b7b1}{__raw=[3Q]})}}}{basic_string<char, std::char_traits<char>, std::allocator<char>>={__compressed_pair<std::basic_string<char>::__rep, std::allocator<char>>={__rep=(?={__long=*Qb63b1}{__short=[23c][0C]b7b1}{__raw=[3Q]})}}}{type_index=^{type_info}}}8@?0')
+    >>> o.ctypes
     ['struct PersistentSubscriptionIdentifier', 'void *']
-    >>> ObjCEncodedTypes(b'{CLWifiLocationUpdateRequest=iiB{basic_string<char, std::char_traits<char>, std::allocator<char>>={__compressed_pair<std::basic_string<char>::__rep, std::allocator<char>>={__rep=(?={__long=*Qb63b1}{__short=[23c][0C]b7b1}{__raw=[3Q]})}}}diBBiidddddiBBBi{basic_string<char, std::char_traits<char>, std::allocator<char>>={__compressed_pair<std::basic_string<char>::__rep, std::allocator<char>>={__rep=(?={__long=*Qb63b1}{__short=[23c][0C]b7b1}{__raw=[3Q]})}}}}8@?0').ctypes
+
+    >>> o = ObjCEncodedTypes(b'{CLWifiLocationUpdateRequest=iiB{basic_string<char, std::char_traits<char>, std::allocator<char>>={__compressed_pair<std::basic_string<char>::__rep, std::allocator<char>>={__rep=(?={__long=*Qb63b1}{__short=[23c][0C]b7b1}{__raw=[3Q]})}}}diBBiidddddiBBBi{basic_string<char, std::char_traits<char>, std::allocator<char>>={__compressed_pair<std::basic_string<char>::__rep, std::allocator<char>>={__rep=(?={__long=*Qb63b1}{__short=[23c][0C]b7b1}{__raw=[3Q]})}}}}8@?0')
+    >>> o.ctypes
     ['struct CLWifiLocationUpdateRequest', 'void *']
-    >>> ObjCEncodedTypes(b'{Fence={basic_string<char, std::char_traits<char>, std::allocator<char>>={__compressed_pair<std::basic_string<char>::__rep, std::allocator<char>>={__rep=(?={__long=*Qb63b1}{__short=[23c][0C]b7b1}{__raw=[3Q]})}}}{basic_string<char, std::char_traits<char>, std::allocator<char>>={__compressed_pair<std::basic_string<char>::__rep, std::allocator<char>>={__rep=(?={__long=*Qb63b1}{__short=[23c][0C]b7b1}{__raw=[3Q]})}}}{basic_string<char, std::char_traits<char>, std::allocator<char>>={__compressed_pair<std::basic_string<char>::__rep, std::allocator<char>>={__rep=(?={__long=*Qb63b1}{__short=[23c][0C]b7b1}{__raw=[3Q]})}}}ddddddddiiidQiiBiiB{basic_string<char, std::char_traits<char>, std::allocator<char>>={__compressed_pair<std::basic_string<char>::__rep, std::allocator<char>>={__rep=(?={__long=*Qb63b1}{__short=[23c][0C]b7b1}{__raw=[3Q]})}}}{CLStrongPtr<NSUUID *>=@}{vector<CLClientLocationCoordinate, std::allocator<CLClientLocationCoordinate>>=^{?}^{?}{__compressed_pair<CLClientLocationCoordinate *, std::allocator<CLClientLocationCoordinate>>=^{?}}}}8@?0').ctypes
+
+    >>> o = ObjCEncodedTypes(b'{Fence={basic_string<char, std::char_traits<char>, std::allocator<char>>={__compressed_pair<std::basic_string<char>::__rep, std::allocator<char>>={__rep=(?={__long=*Qb63b1}{__short=[23c][0C]b7b1}{__raw=[3Q]})}}}{basic_string<char, std::char_traits<char>, std::allocator<char>>={__compressed_pair<std::basic_string<char>::__rep, std::allocator<char>>={__rep=(?={__long=*Qb63b1}{__short=[23c][0C]b7b1}{__raw=[3Q]})}}}{basic_string<char, std::char_traits<char>, std::allocator<char>>={__compressed_pair<std::basic_string<char>::__rep, std::allocator<char>>={__rep=(?={__long=*Qb63b1}{__short=[23c][0C]b7b1}{__raw=[3Q]})}}}ddddddddiiidQiiBiiB{basic_string<char, std::char_traits<char>, std::allocator<char>>={__compressed_pair<std::basic_string<char>::__rep, std::allocator<char>>={__rep=(?={__long=*Qb63b1}{__short=[23c][0C]b7b1}{__raw=[3Q]})}}}{CLStrongPtr<NSUUID *>=@}{vector<CLClientLocationCoordinate, std::allocator<CLClientLocationCoordinate>>=^{?}^{?}{__compressed_pair<CLClientLocationCoordinate *, std::allocator<CLClientLocationCoordinate>>=^{?}}}}8@?0')
+    >>> o.ctypes
     ['struct Fence', 'void *']
-    >>> ObjCEncodedTypes(b'{ScanParameters=iii{vector<int, std::allocator<int>>=^i^i{__compressed_pair<int *, std::allocator<int>>=^i}}{duration<long long, std::ratio<1, 1000>>=q}{duration<long long, std::ratio<1>>=q}BB{basic_string<char, std::char_traits<char>, std::allocator<char>>={__compressed_pair<std::basic_string<char>::__rep, std::allocator<char>>={__rep=(?={__long=*Qb63b1}{__short=[23c][0C]b7b1}{__raw=[3Q]})}}}c}8@?0').ctypes
+
+    >>> o = ObjCEncodedTypes(b'{ScanParameters=iii{vector<int, std::allocator<int>>=^i^i{__compressed_pair<int *, std::allocator<int>>=^i}}{duration<long long, std::ratio<1, 1000>>=q}{duration<long long, std::ratio<1>>=q}BB{basic_string<char, std::char_traits<char>, std::allocator<char>>={__compressed_pair<std::basic_string<char>::__rep, std::allocator<char>>={__rep=(?={__long=*Qb63b1}{__short=[23c][0C]b7b1}{__raw=[3Q]})}}}c}8@?0')
+    >>> o.ctypes
     ['struct ScanParameters', 'void *']
-    >>> ObjCEncodedTypes(b'{MonitoredRegion=^^?{basic_string<char, std::char_traits<char>, std::allocator<char>>={__compressed_pair<std::basic_string<char>::__rep, std::allocator<char>>={__rep=(?={__long=*Qb63b1}{__short=[23c][0C]b7b1}{__raw=[3Q]})}}}SSi{basic_string<char, std::char_traits<char>, std::allocator<char>>={__compressed_pair<std::basic_string<char>::__rep, std::allocator<char>>={__rep=(?={__long=*Qb63b1}{__short=[23c][0C]b7b1}{__raw=[3Q]})}}}{basic_string<char, std::char_traits<char>, std::allocator<char>>={__compressed_pair<std::basic_string<char>::__rep, std::allocator<char>>={__rep=(?={__long=*Qb63b1}{__short=[23c][0C]b7b1}{__raw=[3Q]})}}}{basic_string<char, std::char_traits<char>, std::allocator<char>>={__compressed_pair<std::basic_string<char>::__rep, std::allocator<char>>={__rep=(?={__long=*Qb63b1}{__short=[23c][0C]b7b1}{__raw=[3Q]})}}}i}8@?0').ctypes
+
+    >>> o = ObjCEncodedTypes(b'{MonitoredRegion=^^?{basic_string<char, std::char_traits<char>, std::allocator<char>>={__compressed_pair<std::basic_string<char>::__rep, std::allocator<char>>={__rep=(?={__long=*Qb63b1}{__short=[23c][0C]b7b1}{__raw=[3Q]})}}}SSi{basic_string<char, std::char_traits<char>, std::allocator<char>>={__compressed_pair<std::basic_string<char>::__rep, std::allocator<char>>={__rep=(?={__long=*Qb63b1}{__short=[23c][0C]b7b1}{__raw=[3Q]})}}}{basic_string<char, std::char_traits<char>, std::allocator<char>>={__compressed_pair<std::basic_string<char>::__rep, std::allocator<char>>={__rep=(?={__long=*Qb63b1}{__short=[23c][0C]b7b1}{__raw=[3Q]})}}}{basic_string<char, std::char_traits<char>, std::allocator<char>>={__compressed_pair<std::basic_string<char>::__rep, std::allocator<char>>={__rep=(?={__long=*Qb63b1}{__short=[23c][0C]b7b1}{__raw=[3Q]})}}}i}8@?0')
+    >>> o.ctypes
     ['struct MonitoredRegion', 'void *']
-    >>> ObjCEncodedTypes(b'{Name={basic_string<char, std::char_traits<char>, std::allocator<char>>={__compressed_pair<std::basic_string<char>::__rep, std::allocator<char>>={__rep=(?={__long=*Qb63b1}{__short=[23c][0C]b7b1}{__raw=[3Q]})}}}{basic_string<char, std::char_traits<char>, std::allocator<char>>={__compressed_pair<std::basic_string<char>::__rep, std::allocator<char>>={__rep=(?={__long=*Qb63b1}{__short=[23c][0C]b7b1}{__raw=[3Q]})}}}{basic_string<char, std::char_traits<char>, std::allocator<char>>={__compressed_pair<std::basic_string<char>::__rep, std::allocator<char>>={__rep=(?={__long=*Qb63b1}{__short=[23c][0C]b7b1}{__raw=[3Q]})}}}{basic_string<char, std::char_traits<char>, std::allocator<char>>={__compressed_pair<std::basic_string<char>::__rep, std::allocator<char>>={__rep=(?={__long=*Qb63b1}{__short=[23c][0C]b7b1}{__raw=[3Q]})}}}{basic_string<char, std::char_traits<char>, std::allocator<char>>={__compressed_pair<std::basic_string<char>::__rep, std::allocator<char>>={__rep=(?={__long=*Qb63b1}{__short=[23c][0C]b7b1}{__raw=[3Q]})}}}BBB{basic_string<char, std::char_traits<char>, std::allocator<char>>={__compressed_pair<std::basic_string<char>::__rep, std::allocator<char>>={__rep=(?={__long=*Qb63b1}{__short=[23c][0C]b7b1}{__raw=[3Q]})}}}{basic_string<char, std::char_traits<char>, std::allocator<char>>={__compressed_pair<std::basic_string<char>::__rep, std::allocator<char>>={__rep=(?={__long=*Qb63b1}{__short=[23c][0C]b7b1}{__raw=[3Q]})}}}{basic_string<char, std::char_traits<char>, std::allocator<char>>={__compressed_pair<std::basic_string<char>::__rep, std::allocator<char>>={__rep=(?={__long=*Qb63b1}{__short=[23c][0C]b7b1}{__raw=[3Q]})}}}BBB}8@?0').ctypes
+
+    >>> o = ObjCEncodedTypes(b'{Name={basic_string<char, std::char_traits<char>, std::allocator<char>>={__compressed_pair<std::basic_string<char>::__rep, std::allocator<char>>={__rep=(?={__long=*Qb63b1}{__short=[23c][0C]b7b1}{__raw=[3Q]})}}}{basic_string<char, std::char_traits<char>, std::allocator<char>>={__compressed_pair<std::basic_string<char>::__rep, std::allocator<char>>={__rep=(?={__long=*Qb63b1}{__short=[23c][0C]b7b1}{__raw=[3Q]})}}}{basic_string<char, std::char_traits<char>, std::allocator<char>>={__compressed_pair<std::basic_string<char>::__rep, std::allocator<char>>={__rep=(?={__long=*Qb63b1}{__short=[23c][0C]b7b1}{__raw=[3Q]})}}}{basic_string<char, std::char_traits<char>, std::allocator<char>>={__compressed_pair<std::basic_string<char>::__rep, std::allocator<char>>={__rep=(?={__long=*Qb63b1}{__short=[23c][0C]b7b1}{__raw=[3Q]})}}}{basic_string<char, std::char_traits<char>, std::allocator<char>>={__compressed_pair<std::basic_string<char>::__rep, std::allocator<char>>={__rep=(?={__long=*Qb63b1}{__short=[23c][0C]b7b1}{__raw=[3Q]})}}}BBB{basic_string<char, std::char_traits<char>, std::allocator<char>>={__compressed_pair<std::basic_string<char>::__rep, std::allocator<char>>={__rep=(?={__long=*Qb63b1}{__short=[23c][0C]b7b1}{__raw=[3Q]})}}}{basic_string<char, std::char_traits<char>, std::allocator<char>>={__compressed_pair<std::basic_string<char>::__rep, std::allocator<char>>={__rep=(?={__long=*Qb63b1}{__short=[23c][0C]b7b1}{__raw=[3Q]})}}}{basic_string<char, std::char_traits<char>, std::allocator<char>>={__compressed_pair<std::basic_string<char>::__rep, std::allocator<char>>={__rep=(?={__long=*Qb63b1}{__short=[23c][0C]b7b1}{__raw=[3Q]})}}}BBB}8@?0')
+    >>> o.ctypes
     ['struct Name', 'void *']
-    >>> ObjCEncodedTypes(b'v20@?0B8@?<{CLDaemonLocation=i{?=dd}ddddddddidi{?=dd}diIiiidB}@?>12').ctypes
+
+    >>> o = ObjCEncodedTypes(b'v20@?0B8@?<{CLDaemonLocation=i{?=dd}ddddddddidi{?=dd}diIiiidB}@?>12')
+    >>> o.ctypes
     ['void', 'void *', 'bool', 'void *']
-    >>> ObjCEncodedTypes(b'v16@?0@?<{vector<CLFenceManager_Type::Fence, std::allocator<CLFenceManager_Type::Fence>>=^{Fence}^{Fence}{__compressed_pair<CLFenceManager_Type::Fence *, std::allocator<CLFenceManager_Type::Fence>>=^{Fence}}}@?>8').ctypes
+
+    >>> o = ObjCEncodedTypes(b'v16@?0@?<{vector<CLFenceManager_Type::Fence, std::allocator<CLFenceManager_Type::Fence>>=^{Fence}^{Fence}{__compressed_pair<CLFenceManager_Type::Fence *, std::allocator<CLFenceManager_Type::Fence>>=^{Fence}}}@?>8')
+    >>> o.ctypes
     ['void', 'void *', 'void *']
-    >>> ObjCEncodedTypes(b'v24@?0{time_point<cl::chrono::CFAbsoluteTimeClock, std::chrono::duration<long double>>={duration<long double, std::ratio<1>>=D}}8r^v16').ctypes
+
+    >>> o = ObjCEncodedTypes(b'v24@?0{time_point<cl::chrono::CFAbsoluteTimeClock, std::chrono::duration<long double>>={duration<long double, std::ratio<1>>=D}}8r^v16')
+    >>> o.ctypes
     ['void', 'void *', 'struct time_point<cl::chrono::CFAbsoluteTimeClock, std::chrono::duration<long double>>', 'const void *']
-    >>> ObjCEncodedTypes(b'v28@?0^{_launch_domain_io_s={_launch_obj_header_s=^vB}{?=*{_xpc_token_s=IIIIIiii}Q^{dispatch_queue_s}@?@?^{_launch_array_s}ICb1}}8^{_launch_io_s={_launch_obj_header_s=^vB}{?={_xpc_token_s=IIIIIiii}Q}{?=C*^{dispatch_data_s}^{_xpc_bundle_s}^v{stat=iSSQIIi{timespec=qq}{timespec=qq}{timespec=qq}{timespec=qq}qqiIIi[2q]}i^{dispatch_queue_s}@?b1b1b1}}16i24').ctypes
+
+    >>> o = ObjCEncodedTypes(b'v28@?0^{_launch_domain_io_s={_launch_obj_header_s=^vB}{?=*{_xpc_token_s=IIIIIiii}Q^{dispatch_queue_s}@?@?^{_launch_array_s}ICb1}}8^{_launch_io_s={_launch_obj_header_s=^vB}{?={_xpc_token_s=IIIIIiii}Q}{?=C*^{dispatch_data_s}^{_xpc_bundle_s}^v{stat=iSSQIIi{timespec=qq}{timespec=qq}{timespec=qq}{timespec=qq}qqiIIi[2q]}i^{dispatch_queue_s}@?b1b1b1}}16i24')
+    >>> o.ctypes
     ['void', 'void *', 'struct _launch_domain_io_s *', 'struct _launch_io_s *', 'int']
-    >>> ObjCEncodedTypes(b'v20@?0^{_launch_io_s={_launch_obj_header_s=^vB}{?={_xpc_token_s=IIIIIiii}Q}{?=C*^{dispatch_data_s}^{_xpc_bundle_s}^v{stat=iSSQIIi{timespec=qq}{timespec=qq}{timespec=qq}{timespec=qq}qqiIIi[2q]}i^{dispatch_queue_s}@?b1b1b1}}8i16').ctypes
+
+    >>> o = ObjCEncodedTypes(b'v20@?0^{_launch_io_s={_launch_obj_header_s=^vB}{?={_xpc_token_s=IIIIIiii}Q}{?=C*^{dispatch_data_s}^{_xpc_bundle_s}^v{stat=iSSQIIi{timespec=qq}{timespec=qq}{timespec=qq}{timespec=qq}qqiIIi[2q]}i^{dispatch_queue_s}@?b1b1b1}}8i16')
+    >>> o.ctypes
     ['void', 'void *', 'struct _launch_io_s *', 'int']
-    >>> ObjCEncodedTypes(b'v28@?0^{_launch_domain_io_s={_launch_obj_header_s=^vB}{?=*{_xpc_token_s=IIIIIiii}Q^{dispatch_queue_s}@?@?^{_launch_array_s}ICb1}}8^{_launch_io_s={_launch_obj_header_s=^vB}{?={_xpc_token_s=IIIIIiii}Q}{?=C*^{dispatch_data_s}^{_xpc_bundle_s}^v{stat=iSSQIIi{timespec=qq}{timespec=qq}{timespec=qq}{timespec=qq}qqiIIi[2q]}i^{dispatch_queue_s}@?b1b1b1}}16i24').ctypes
+
+    >>> o = ObjCEncodedTypes(b'v28@?0^{_launch_domain_io_s={_launch_obj_header_s=^vB}{?=*{_xpc_token_s=IIIIIiii}Q^{dispatch_queue_s}@?@?^{_launch_array_s}ICb1}}8^{_launch_io_s={_launch_obj_header_s=^vB}{?={_xpc_token_s=IIIIIiii}Q}{?=C*^{dispatch_data_s}^{_xpc_bundle_s}^v{stat=iSSQIIi{timespec=qq}{timespec=qq}{timespec=qq}{timespec=qq}qqiIIi[2q]}i^{dispatch_queue_s}@?b1b1b1}}16i24')
+    >>> o.ctypes
     ['void', 'void *', 'struct _launch_domain_io_s *', 'struct _launch_io_s *', 'int']
     """
 

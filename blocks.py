@@ -380,6 +380,7 @@ class BlockLiteral:
             self.data_var.type = self.struct_type_name
 
         if self.struct_builder.width < bd.size:
+            # XXX try to pick up imported vars automatically
             n_unaccounted = bd.size - struct.width
             self._bv.set_comment_at(self.address, f"Block literal of size {bd.size:#x}\nstruct {self.struct_name} of width {self.struct_builder.width:#x}\n{n_unaccounted:#x} bytes missing in struct type\nAdd manually by modifying struct type")
 
@@ -394,6 +395,7 @@ class BlockLiteral:
         try:
             return self._bv.parse_type_string(ctype)[0]
         except SyntaxError:
+            # XXX if struct or union and we have member type info, create struct or union and retry
             return self._bv.parse_type_string(fallback)[0]
 
     def annotate_layout_bytecode(self, bd):

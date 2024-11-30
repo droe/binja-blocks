@@ -25,13 +25,16 @@ Features:
 
 -   Annotate global blocks
 -   Annotate stack blocks
--   Annotate block imported variables for extended layout with compact or bytecode layout encodings
+-   Annotate block imported variables for extended layout with compact or
+    bytecode layout encodings
 -   Annotate block descriptors
--   Annotate block invoke function type based on encoded block ObjC type signature
+-   Annotate block invoke function type based on encoded block ObjC type
+    signature
 -   Annotate block copy and dispose functions
 -   Annotate stack byrefs
 -   Annotate stack byref fields for non-extended layout
--   Annotate stack byref fields for extended layout with compact or bytecode layout encodings
+-   Annotate stack byref fields for extended layout with compact or bytecode
+    layout encodings
 -   Define per-block named structs to allow for manual fixups
 -   Define structs for fully manual annotation: `Block_literal`,
     `Block_descriptor_1`, `Block_descriptor_2`, `Block_descriptor_3`,
@@ -41,9 +44,16 @@ Features:
 
 Planned improvements, PRs welcome:
 
--   Allow re-annotating already annotated blocks, e.g. after partial failure or manual changes
+-   Find stack writes beyond end of struct but within size, between insn that
+    set up structure and first reference of structure, and pick up as
+    non-pointer imported fields
+-   Automatically create structs for which internal type info is available,
+    unless they can be pulled from some type archive
+-   Allow re-annotating already annotated blocks, e.g. after partial failure or
+    manual changes
 -   Annotate block imported variables for non-extended layout
--   Plugin command to annotate byrefs manually more conveniently than annotating the type
+-   Plugin command to annotate byrefs manually more conveniently than
+    annotating the type
 
 Less likely to get implemented, but PRs welcome:
 
