@@ -10,8 +10,21 @@ over and related function signatures in [Binary Ninja](https://binary.ninja/).
 Blocks are an implementation of closures often found in C, C++, ObjC and ObjC++
 code for Apple platforms.  Blocks are not the same as C++ lambdas.
 
-This plugin should be considered experimental and will almost certainly benefit
-from further improvements.  PRs and feedback welcome.
+Stack block before annotation:
+
+![Screenshot of stack block before annotation](https://github.com/droe/binja-blocks/blob/0.3.4/.github/img/stack_block_before.png?raw=true)
+
+Stack block after annotation:
+
+![Screenshot of stack block after annotation](https://github.com/droe/binja-blocks/blob/0.3.4/.github/img/stack_block_after.png?raw=true)
+
+Invoke function before annotation:
+
+![Screenshot of invoke function before annotation](https://github.com/droe/binja-blocks/blob/0.3.4/.github/img/invoke_before.png?raw=true)
+
+Invoke function after annotation:
+
+![Screenshot of invoke function after annotation](https://github.com/droe/binja-blocks/blob/0.3.4/.github/img/invoke_after.png?raw=true)
 
 Commands:
 
@@ -44,6 +57,7 @@ Features:
 
 Planned improvements, PRs welcome:
 
+-   Plugin command to remove comments added by this plugin
 -   Find stack writes beyond end of struct but within size, between insn that
     set up structure and first reference of structure, and pick up as
     non-pointer imported fields
