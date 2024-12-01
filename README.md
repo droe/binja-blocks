@@ -31,8 +31,9 @@ Commands:
 -   Annotate all blocks
 -   Annotate all global blocks
 -   Annotate all stack blocks
--   Global block here
--   Stack block here
+-   Annotate global block here
+-   Annotate stack block here
+-   Remove plugin comment here
 
 Features:
 
@@ -57,7 +58,6 @@ Features:
 
 Planned improvements, PRs welcome:
 
--   Plugin command to remove comments added by this plugin
 -   Find stack writes beyond end of struct but within size, between insn that
     set up structure and first reference of structure, and pick up as
     non-pointer imported fields

@@ -866,18 +866,18 @@ def annotate_all_stack_blocks(bv, set_progress=None):
         annotate_stack_block_literal(bv, insn)
 
 
-@shinobi.register_for_high_level_il_instruction("Blocks\\Stack block here", is_valid=is_valid)
+@shinobi.register_for_high_level_il_instruction("Blocks\\Annotate stack block here", is_valid=is_valid)
 @shinobi.background_task("Blocks: Stack block")
-def plugin_cmd_stack_block_literal_here(bv, block_literal_insn, set_progress=None):
+def plugin_cmd_annotate_stack_block_literal_here(bv, block_literal_insn, set_progress=None):
     """
     Define a stack block literal here.
     """
     annotate_stack_block_literal(bv, block_literal_insn)
 
 
-@shinobi.register_for_address("Blocks\\Global block here", is_valid=is_valid)
+@shinobi.register_for_address("Blocks\\Annotate global block here", is_valid=is_valid)
 @shinobi.background_task("Blocks: Global block")
-def plugin_cmd_global_block_literal_here(bv, address, set_progress=None):
+def plugin_cmd_annotate_global_block_literal_here(bv, address, set_progress=None):
     """
     Define a global block literal here.
     """
@@ -916,3 +916,13 @@ def plugin_cmd_annotate_all_stack_blocks(bv, set_progress=None):
     _define_ns_concrete_block_imports(bv)
     annotate_all_global_blocks(bv, set_progress=set_progress)
     annotate_all_stack_blocks(bv, set_progress=set_progress)
+
+@shinobi.register_for_address("Blocks\\Remove plugin comment here", is_valid=is_valid)
+@shinobi.background_task("Blocks: Remove comment")
+def plugin_cmd_remove_plugin_comment_here(bv, address, set_progress=None):
+    """
+    Remove global comment here.
+    Useful to remove comments added by this plugin, e.g. after manually
+    adding missing imported variables to block literals.
+    """
+    bv.set_comment_at(address, None)
