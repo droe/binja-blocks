@@ -467,29 +467,73 @@ class BlockLiteral:
                     print(f"Failed to parse ObjC type encoding {bd.signature_raw!r}: {type(e).__name__}: {e}", file=sys.stderr)
                     func_type = None
             else:
+                # No signature string.
                 func_type = None
-            if func_type is None:
+
+            if func_type is None and len(invoke_func.parameter_vars) == 0:
+                # If Binja did not pick up on any parameters, fall back to a vararg
+                # signature.  We're not going to clobber any parameter types.
                 func_type = binja.Type.function(binja.Type.void(), [binja.Type.pointer(self._bv.arch, self.struct_type)], variable_arguments=True)
-            invoke_func.type = func_type
+
+            if func_type is None:
+                # Finally fall back to surgically setting return and first argument
+                # types, leaving the other parameters undisturbed.
+                invoke_func.return_type = binja.Type.void()
+                invoke_func.parameter_vars[0].set_name_and_type_async("block", binja.Type.pointer(self._bv.arch, self.struct_type))
+                self._bv.update_analysis_and_wait()
+
+            else:
+                # Set function type.
+
+                # As of Binja 4.2, the setter for Function.type does not
+                # update_analysis_and_wait(), unlike the Variable.name and
+                # Variable.type setters that do.  Also, the setter for
+                # Variable.name is not atomic; it will first copy the current
+                # type, then proceed to set both name and type on the variable.
+                # As a result, we need to update_analysis_and_wait() manually
+                # to avoid an easy-to-repro race condition where a subsequent
+                # assignment to Variable.name while the Function.type
+                # assignment is still in flight may clobber the type for the
+                # first parameter with the type it had before assigning the
+                # function type.
+                invoke_func.type = func_type
+                self._bv.update_analysis_and_wait()
+
+                if len(invoke_func.parameter_vars) >= 1:
+                    invoke_func.parameter_vars[0].name = "block"
+
             if invoke_func.name == f"sub_{invoke_func.start:x}":
                 invoke_func.name = f"sub_{invoke_func.start:x}_block_invoke"
-            invoke_func.reanalyze()
 
         if bd.block_has_copy_dispose:
+            # Interleave annotation of the two functions in order to minimize
+            # the number of expensive calls to update_analysis_and_wait().
             copy_func = self._bv.get_function_at(bd.copy)
-            if copy_func is not None:
-                copy_func.type = binja.Type.function(binja.Type.void(), [binja.Type.pointer(self._bv.arch, self.struct_type),
-                                                                         binja.Type.pointer(self._bv.arch, self.struct_type)])
-                if copy_func.name == f"sub_{copy_func.start:x}":
-                    copy_func.name = f"sub_{copy_func.start:x}_block_copy"
-                copy_func.reanalyze()
-
             dispose_func = self._bv.get_function_at(bd.dispose)
-            if dispose_func is not None:
-                dispose_func.type = binja.Type.function(binja.Type.void(), [binja.Type.pointer(self._bv.arch, self.struct_type)])
-                if dispose_func.name == f"sub_{dispose_func.start:x}":
-                    dispose_func.name = f"sub_{dispose_func.start:x}_block_dispose"
-                dispose_func.reanalyze()
+            if copy_func is not None or dispose_func is not None:
+                if copy_func is not None:
+                    copy_func.type = binja.Type.function(binja.Type.void(), [binja.Type.pointer(self._bv.arch, self.struct_type),
+                                                                             binja.Type.pointer(self._bv.arch, self.struct_type)])
+                if dispose_func is not None:
+                    dispose_func.type = binja.Type.function(binja.Type.void(), [binja.Type.pointer(self._bv.arch, self.struct_type)])
+                self._bv.update_analysis_and_wait()
+
+                if copy_func is not None:
+                    if len(copy_func.parameter_vars) >= 2:
+                        copy_func.parameter_vars[0].set_name_async("dst")
+                        copy_func.parameter_vars[1].set_name_async("src")
+                if dispose_func is not None:
+                    if len(dispose_func.parameter_vars) >= 1:
+                        dispose_func.parameter_vars[0].set_name_async("dst")
+                self._bv.update_analysis_and_wait()
+
+                if copy_func is not None:
+                    if copy_func.name == f"sub_{copy_func.start:x}":
+                        copy_func.name = f"sub_{copy_func.start:x}_block_copy"
+
+                if dispose_func is not None:
+                    if dispose_func.name == f"sub_{dispose_func.start:x}":
+                        dispose_func.name = f"sub_{dispose_func.start:x}_block_dispose"
 
 
 class BlockDescriptor:
