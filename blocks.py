@@ -415,9 +415,11 @@ class BlockLiteral:
             self.data_var.type = self.struct_type_name
 
         if self.struct_builder.width < bd.size:
-            # XXX try to pick up imported vars automatically
+            # The comment uses ###h instead of 0x### syntax to avoid Binja
+            # interpreting hexadecimal sizes as clickable addresses.
             n_unaccounted = bd.size - struct.width
             self._bv.set_comment_at(self.address, f"Apple Blocks Plugin:\nBlock literal nominal size {bd.size:x}h.\n{self.struct_type_name} has width {self.struct_builder.width:x}h.\n{n_unaccounted:x}h bytes missing, add to struct manually.")
+            # XXX try to pick up imported vars automatically
 
     def _type_for_ctype(self, ctype):
         if ctype.endswith("!"):
@@ -501,6 +503,14 @@ class BlockLiteral:
 
                 if len(invoke_func.parameter_vars) >= 1:
                     invoke_func.parameter_vars[0].name = "block"
+
+                # propagate invoke function signature to invoke pointer on block literal
+                invoke_pointer_index = self.struct_builder.index_by_name("invoke")
+                self.struct_builder.replace(invoke_pointer_index,
+                                            binja.Type.pointer(self._bv.arch, func_type), "invoke")
+                self._bv.define_type(binja.Type.generate_auto_type_id(_TYPE_ID_SOURCE, self.struct_name),
+                                     self.struct_name, self.struct_builder)
+                self.struct_type = self._bv.parse_type_string(self.struct_type_name)[0]
 
             if invoke_func.name == f"sub_{invoke_func.start:x}":
                 invoke_func.name = f"sub_{invoke_func.start:x}_block_invoke"
