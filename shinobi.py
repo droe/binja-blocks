@@ -120,6 +120,18 @@ def background_task(label="Plugin action"):
     return decorator
 
 
+def undoable(func):
+    """
+    Decorator for plugin command functions to make them undoable.
+    """
+    def closure(bv, *args, **kvargs):
+        state = bv.begin_undo_actions()
+        func(bv, *args, **kvargs)
+        bv.commit_undo_actions(state)
+    closure.__doc__ = func.__doc__
+    return closure
+
+
 def yield_symbols_of_type(bv, name, type_):
     """
     Find all symbols of a specific type and return a generator for them.

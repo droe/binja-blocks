@@ -922,6 +922,7 @@ def annotate_all_stack_blocks(bv, set_progress=None):
 
 @shinobi.register_for_high_level_il_instruction("Blocks\\Annotate stack block here", is_valid=is_valid)
 @shinobi.background_task("Blocks: Stack block")
+@shinobi.undoable
 def plugin_cmd_annotate_stack_block_literal_here(bv, block_literal_insn, set_progress=None):
     """
     Define a stack block literal here.
@@ -931,6 +932,7 @@ def plugin_cmd_annotate_stack_block_literal_here(bv, block_literal_insn, set_pro
 
 @shinobi.register_for_address("Blocks\\Annotate global block here", is_valid=is_valid)
 @shinobi.background_task("Blocks: Global block")
+@shinobi.undoable
 def plugin_cmd_annotate_global_block_literal_here(bv, address, set_progress=None):
     """
     Define a global block literal here.
@@ -940,6 +942,7 @@ def plugin_cmd_annotate_global_block_literal_here(bv, address, set_progress=None
 
 @shinobi.register("Blocks\\Annotate all stack blocks", is_valid=is_valid)
 @shinobi.background_task("Blocks: All stack blocks")
+@shinobi.undoable
 def plugin_cmd_annotate_all_stack_blocks(bv, set_progress=None):
     """
     Look for all occurences of __NSConcreteStackBlock and
@@ -951,6 +954,7 @@ def plugin_cmd_annotate_all_stack_blocks(bv, set_progress=None):
 
 @shinobi.register("Blocks\\Annotate all global blocks", is_valid=is_valid)
 @shinobi.background_task("Blocks: All global blocks")
+@shinobi.undoable
 def plugin_cmd_annotate_all_global_blocks(bv, set_progress=None):
     """
     Look for all occurences of __NSConcreteGlobalBlock and
@@ -962,6 +966,7 @@ def plugin_cmd_annotate_all_global_blocks(bv, set_progress=None):
 
 @shinobi.register("Blocks\\Annotate all blocks", is_valid=is_valid)
 @shinobi.background_task("Blocks: All blocks")
+@shinobi.undoable
 def plugin_cmd_annotate_all_stack_blocks(bv, set_progress=None):
     """
     Look for all occurences of __NSConcreteGlobalBlock and __NSConcreteStackBlock
@@ -973,6 +978,7 @@ def plugin_cmd_annotate_all_stack_blocks(bv, set_progress=None):
 
 @shinobi.register_for_address("Blocks\\Remove plugin comment here", is_valid=is_valid)
 @shinobi.background_task("Blocks: Remove comment")
+@shinobi.undoable
 def plugin_cmd_remove_plugin_comment_here(bv, address, set_progress=None):
     """
     Remove global comment here.
