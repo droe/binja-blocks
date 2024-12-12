@@ -192,14 +192,16 @@ def _define_ns_concrete_block_imports(bv):
     Make sure __NSConcreteGlobalBlock and __NSConcreteStackBlock are defined
     appropriately.
     """
-    class_type = _get_objc_type(bv, "Class")
+    objc_class_type = _get_objc_type(bv, "Class")
     for sym_name in ("__NSConcreteGlobalBlock", "__NSConcreteStackBlock"):
-        ext_sym = shinobi.get_symbol_of_type(bv, sym_name, binja.SymbolType.ExternalSymbol)
-        if ext_sym is None:
-            return
-        shinobi.make_data_var(bv,
-                              ext_sym.address,
-                              class_type)
+        for sym_type in (binja.SymbolType.ExternalSymbol, binja.SymbolType.DataSymbol):
+            sym = shinobi.get_symbol_of_type(bv, sym_name, sym_type)
+            if sym is None or sym.address == 0:
+                continue
+            shinobi.make_data_var(bv,
+                                  sym.address,
+                                  objc_class_type)
+            break
 
 
 def append_layout_fields(bv, struct, layout, block_has_extended_layout, byref_indexes=None, layout_end_obj=None):
@@ -285,7 +287,7 @@ class BlockLiteral:
         return cls(bv, is_stack_block, bl_data_var, isa, flags, reserved, invoke, descriptor)
 
     @classmethod
-    def from_stack(cls, bv, bl_insn, bl_var):
+    def from_stack(cls, bv, bl_insn, bl_var, sym_addrs):
         is_stack_block = True
         bl_var.type = _get_libclosure_type(bv, "Block_literal")
         bl_insn = shinobi.reload_hlil_instruction(bv, bl_insn)
@@ -304,8 +306,11 @@ class BlockLiteral:
 
         for insn in shinobi.yield_struct_field_assign_hlil_instructions_for_var_id(bl_insn.function, stack_var_id):
             if insn.dest.member_index == 0:
-                if isinstance(insn.src, binja.HighLevelILImport) and str(insn.src) == '__NSConcreteStackBlock':
-                    isa = insn.src.address
+                if isinstance(insn.src, (binja.HighLevelILImport, binja.HighLevelILConstPtr)) and \
+                        insn.src.constant in sym_addrs:
+                    isa = insn.src.constant
+                else:
+                    raise RuntimeError("RHS of isa is not __NSConcreteStackBlock.")
             elif insn.dest.member_index == 1:
                 if isinstance(insn.src, binja.HighLevelILStructField):
                     raise RuntimeError("RHS of flags is struct field instead of constant.  If d8-d15/v8-v15 then likely because of Binja bug treating them as caller-saved when they are supposed to be callee-saved.")
@@ -646,10 +651,16 @@ class BlockDescriptor:
         bl.struct_type = self._bv.parse_type_string(bl.struct_type_name)[0]
 
 
-def annotate_global_block_literal(bv, block_literal_addr):
+def annotate_global_block_literal(bv, block_literal_addr, sym_addrs=None):
     where = f"global block {block_literal_addr:x}"
 
     print(f"Annotating {where}")
+
+    if sym_addrs is None:
+        sym_addrs = shinobi.get_symbol_addresses(bv, "__NSConcreteGlobalBlock")
+        if len(sym_addrs) == 0:
+            print("__NSConcreteGlobalBlock not found, target does not appear to contain any global blocks")
+            return
 
     block_literal_data_var = bv.get_data_var_at(block_literal_addr)
     if block_literal_data_var is None:
@@ -667,12 +678,8 @@ def annotate_global_block_literal(bv, block_literal_addr):
     if not isinstance(data_var_value, int):
         print(f"{where}: Data var has value {data_var_value} of type {type(data_var_value).__name__}, expected int, fix plugin", file=sys.stderr)
         return
-    ext_sym = shinobi.get_symbol_of_type(bv, "__NSConcreteGlobalBlock", binja.SymbolType.ExternalSymbol)
-    if ext_sym is None:
-        print(f"__NSConcreteGlobalBlock not found", file=sys.stderr)
-        return
-    if not data_var_value == ext_sym.address:
-        print(f"{where}: Data var has value {data_var_value:x} instead of {ext_sym.address:x} __NSConcreteGlobalBlock", file=sys.stderr)
+    if data_var_value not in sym_addrs:
+        print(f"{where}: Data var has value {data_var_value:x} instead of __NSConcreteGlobalBlock", file=sys.stderr)
         return
 
     try:
@@ -689,10 +696,16 @@ def annotate_global_block_literal(bv, block_literal_addr):
         return
 
 
-def annotate_stack_block_literal(bv, block_literal_insn):
+def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
     where = f"stack block {block_literal_insn.address:x}"
 
     print(f"Annotating {where}")
+
+    if sym_addrs is None:
+        sym_addrs = shinobi.get_symbol_addresses(bv, "__NSConcreteStackBlock")
+        if len(sym_addrs) == 0:
+            print("__NSConcreteStackBlock not found, target does not appear to contain any stack blocks")
+            return
 
     if isinstance(block_literal_insn, binja.HighLevelILVarInit):
         # The most common case where Binja knows nothing about the stack
@@ -721,12 +734,15 @@ def annotate_stack_block_literal(bv, block_literal_insn):
         print(f"{where}: Assignment is not to a stack variable (var source_type is {block_literal_var.source_type!r})", file=sys.stderr)
         return
 
-    if not isinstance(isa_src, binja.HighLevelILImport) or str(isa_src) != '__NSConcreteStackBlock':
-        print(f"{where}: RHS is not HighLevelILImport of __NSConcreteStackBlock", file=sys.stderr)
+    if not ((isinstance(isa_src, binja.HighLevelILImport) and \
+                (isa_src.constant in sym_addrs)) or \
+            (isinstance(isa_src, binja.HighLevelILConstPtr) and \
+                (isa_src.constant in sym_addrs))):
+        print(f"{where}: RHS is not __NSConcreteStackBlock", file=sys.stderr)
         return
 
     try:
-        bl = BlockLiteral.from_stack(bv, block_literal_insn, block_literal_var)
+        bl = BlockLiteral.from_stack(bv, block_literal_insn, block_literal_var, sym_addrs)
         print(bl)
         bd = BlockDescriptor(bv, bl.descriptor, bl.flags)
         print(bd)
@@ -892,24 +908,24 @@ def annotate_stack_block_literal(bv, block_literal_insn):
 
 
 def annotate_all_global_blocks(bv, set_progress=None):
-    ext_sym = shinobi.get_symbol_of_type(bv, "__NSConcreteGlobalBlock", binja.SymbolType.ExternalSymbol)
-    if ext_sym is None:
+    sym_addrs = shinobi.get_symbol_addresses(bv, "__NSConcreteGlobalBlock")
+    if len(sym_addrs) == 0:
         print("__NSConcreteGlobalBlock not found, target does not appear to contain any global blocks")
         return
-    assert ext_sym.address is not None and ext_sym.address != 0
-    for addr in bv.get_data_refs(ext_sym.address):
-        if set_progress is not None:
-            set_progress(f"{addr:x}")
-        annotate_global_block_literal(bv, addr)
+
+    for sym_addr in sym_addrs:
+        for addr in bv.get_data_refs(sym_addr):
+            if set_progress is not None:
+                set_progress(f"{addr:x}")
+            annotate_global_block_literal(bv, addr)
 
 
 def annotate_all_stack_blocks(bv, set_progress=None):
-    imp_data_sym = shinobi.get_symbol_of_type(bv, "__NSConcreteStackBlock", binja.SymbolType.ImportedDataSymbol)
-    imp_addr_sym = shinobi.get_symbol_of_type(bv, "__NSConcreteStackBlock", binja.SymbolType.ImportAddressSymbol)
-    imp_sym = imp_data_sym or imp_addr_sym or None
-    if imp_sym is None:
+    sym_addrs = shinobi.get_symbol_addresses(bv, "__NSConcreteStackBlock")
+    if len(sym_addrs) == 0:
         print("__NSConcreteStackBlock not found, target does not appear to contain any stack blocks")
         return
+
     # We'd want to use get_code_refs here, but it is very unreliable.
     # Yielded refsrc objects often have only llil but not mlil or hlil;
     # .llil.hlil is also None, .llil.hlils contains the llil that matches,
@@ -918,16 +934,18 @@ def annotate_all_stack_blocks(bv, set_progress=None):
     #for refsrc in bv.get_code_refs(imp_sym.address):
     #    print(refsrc)
     #    print(refsrc.llil, refsrc.mlil, refsrc.hlil, refsrc.llil.hlil, refsrc.llil.hlils)
+
     for insn in bv.hlil_instructions:
         if not isinstance(insn, binja.HighLevelILVarInit):
             continue
-        if not isinstance(insn.src, binja.HighLevelILImport):
+        if not isinstance(insn.src, (binja.HighLevelILImport,
+                                     binja.HighLevelILConstPtr)):
             continue
-        if insn.src.constant != imp_sym.address:
+        if insn.src.constant not in sym_addrs:
             continue
         if set_progress is not None:
             set_progress(f"{insn.address:x}")
-        annotate_stack_block_literal(bv, insn)
+        annotate_stack_block_literal(bv, insn, sym_addrs)
 
 
 @shinobi.register_for_high_level_il_instruction("Blocks\\Annotate stack block here", is_valid=is_valid)
