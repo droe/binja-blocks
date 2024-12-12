@@ -19,7 +19,7 @@
     "Windows"
   ],
   "dependencies": {},
-  "version": "0.3.5",
+  "version": "0.3.6",
   "author": "Daniel Roethlisberger",
   "minimumbinaryninjaversion": 6455
 }

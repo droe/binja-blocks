@@ -12,19 +12,19 @@ code for Apple platforms.  Blocks are not the same as C++ lambdas.
 
 Stack block before annotation:
 
-![Screenshot of stack block before annotation](https://github.com/droe/binja-blocks/blob/0.3.4/.github/img/stack_block_before.png?raw=true)
+![Screenshot of stack block before annotation](https://github.com/droe/binja-blocks/blob/0.3.6/.github/img/stack_block_before.png?raw=true)
 
 Stack block after annotation:
 
-![Screenshot of stack block after annotation](https://github.com/droe/binja-blocks/blob/0.3.4/.github/img/stack_block_after.png?raw=true)
+![Screenshot of stack block after annotation](https://github.com/droe/binja-blocks/blob/0.3.6/.github/img/stack_block_after.png?raw=true)
 
 Invoke function before annotation:
 
-![Screenshot of invoke function before annotation](https://github.com/droe/binja-blocks/blob/0.3.4/.github/img/invoke_before.png?raw=true)
+![Screenshot of invoke function before annotation](https://github.com/droe/binja-blocks/blob/0.3.6/.github/img/invoke_before.png?raw=true)
 
 Invoke function after annotation:
 
-![Screenshot of invoke function after annotation](https://github.com/droe/binja-blocks/blob/0.3.4/.github/img/invoke_after.png?raw=true)
+![Screenshot of invoke function after annotation](https://github.com/droe/binja-blocks/blob/0.3.6/.github/img/invoke_after.png?raw=true)
 
 Commands:
 
