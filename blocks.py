@@ -414,13 +414,6 @@ class BlockLiteral:
             self.data_var.name = f"global_block_{self.address:x}"
             self.data_var.type = self.struct_type_name
 
-        if self.struct_builder.width < bd.size:
-            # The comment uses ###h instead of 0x### syntax to avoid Binja
-            # interpreting hexadecimal sizes as clickable addresses.
-            n_unaccounted = bd.size - struct.width
-            self._bv.set_comment_at(self.address, f"Apple Blocks Plugin:\nBlock literal nominal size {bd.size:x}h.\n{self.struct_type_name} has width {self.struct_builder.width:x}h.\n{n_unaccounted:x}h bytes missing, add to struct manually.")
-            # XXX try to pick up imported vars automatically
-
     def _type_for_ctype(self, ctype):
         if ctype.endswith("!"):
             fallback = 'id'
