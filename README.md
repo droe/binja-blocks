@@ -58,9 +58,6 @@ Features:
 
 Planned improvements, PRs welcome:
 
--   Find stack writes beyond end of struct but within size, between insn that
-    set up structure and first reference of structure, and pick up as
-    non-pointer imported fields
 -   Automatically create structs for which internal type info is available,
     unless they can be pulled from some type archive
 -   Allow re-annotating already annotated blocks, e.g. after partial failure or
