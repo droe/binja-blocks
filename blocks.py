@@ -213,7 +213,11 @@ def append_layout_fields(bv, struct, layout, block_has_extended_layout, byref_in
     if layout == 0:
         return
     if not block_has_extended_layout:
-        # XXX
+        # Either "old GC layout" or ABI.2010.3.16 as per
+        # https://clang.llvm.org/docs/Block-ABI-Apple.html,
+        # we don't know how to reliably detect the latter
+        # and we don't know the semantics of the former, so
+        # don't attempt annotation.
         return
     if layout < 0x1000:
         # compact encoding
@@ -376,9 +380,14 @@ class BlockLiteral:
         struct.append(self._bv.parse_type_string(f"uint32_t reserved")[0], "reserved")
         struct.append(_get_libclosure_type(self._bv, "BlockInvokeFunction"), "invoke")
         struct.append(binja.Type.pointer(self._bv.arch, _get_libclosure_type(self._bv, "Block_descriptor_1")), "descriptor") # placeholder
-        if bd.imported_variables_size > 0:
+        if bd.imported_variables_size > 0 and bd.block_has_signature and bd.layout is not None:
             self.byref_indexes = []
-            append_layout_fields(self._bv, struct, bd.layout, bd.block_has_extended_layout, self.byref_indexes, layout_end_obj=bd)
+            append_layout_fields(self._bv,
+                                 struct,
+                                 bd.layout,
+                                 bd.block_has_extended_layout,
+                                 self.byref_indexes,
+                                 layout_end_obj=bd)
         self.struct_builder = struct
         self.struct_name = f"Block_literal_{self.address:x}"
         self._bv.define_type(binja.Type.generate_auto_type_id(_TYPE_ID_SOURCE, self.struct_name), self.struct_name, self.struct_builder)
@@ -565,7 +574,10 @@ class BlockDescriptor:
                 self.signature_raw = self._bv.get_ascii_string_at(self.signature, 0).raw
             else:
                 self.signature_raw = None
-            self.layout = br.read64()
+            if self.block_has_extended_layout:
+                self.layout = br.read64()
+            else:
+                self.layout = None
 
     @property
     def imported_variables_size(self):
@@ -603,14 +615,19 @@ class BlockDescriptor:
             struct.append(_get_libclosure_type(self._bv, "BlockDisposeFunction"), "dispose")
         if self.block_has_signature:
             struct.append(self._bv.parse_type_string("char const *signature")[0], "signature")
-            if self.layout != 0 and self.block_has_extended_layout:
+            if self.block_has_extended_layout:
                 if self.layout < 0x1000:
                     struct.append(self._bv.parse_type_string("uint64_t layout")[0], "layout")
                 else:
                     struct.append(self._bv.parse_type_string("uint8_t const *layout")[0], "layout")
             else:
-                # XXX non-extended layout or layout 0
-                struct.append(self._bv.parse_type_string("void *layout")[0], "layout")
+                # Different possibilities here, with low confidence:
+                # a) "old GC layout", unsure of semantics, and unsure if relevant for 64-bit archs
+                # b) ABI.2010.3.16 as per https://clang.llvm.org/docs/Block-ABI-Apple.html,
+                #    i.e. signature field w/o layout field following, extended layout bit unset
+                # Wrong annotations seem worse than missing a field in the annotation, so
+                # skip the layout field.  Being the last field in the struct, this is safe.
+                pass
         self.struct_builder = struct
         self.struct_name = f"Block_descriptor_{self.address:x}"
         self._bv.define_type(binja.Type.generate_auto_type_id(_TYPE_ID_SOURCE, self.struct_name), self.struct_name, self.struct_builder)

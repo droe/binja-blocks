@@ -69,6 +69,7 @@ Planned improvements, PRs welcome:
 Less likely to get implemented, but PRs welcome:
 
 -   Support for 32-bit architectures
+-   Support for "old GC layout"
 -   Support older block layout from before the introduction of block descriptors
 -   Discover and annotate block stack unwind handlers
 -   Find and annotate byrefs passed as arguments
