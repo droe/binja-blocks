@@ -102,10 +102,6 @@ class ObjCEncodedTypes:
     having a correct fallback where not, e.g. because Binja does not
     know about a class or protocol.
 
-    References:
-    https://developer.apple.com/library/archive/documentation/Cocoa/Conceptual/ObjCRuntimeGuide/Articles/ocrtTypeEncodings.html
-    https://github.com/llvm-mirror/clang/blob/master/lib/AST/ASTContext.cpp
-
     >>> o = ObjCEncodedTypes(b"v8@?0")
     >>> o.ctypes
     ['void', 'void *']
