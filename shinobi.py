@@ -150,6 +150,15 @@ def get_symbol_of_type(bv, name, type_):
         return None
 
 
+def get_symbol_addresses(bv, name):
+    """
+    Find all symbols of a name and return a set of all their addresses.
+    """
+    syms = bv.symbols.get(name, [])
+    syms = filter(lambda sym: sym.address is not None and sym.address != 0, syms)
+    return set([sym.address for sym in syms])
+
+
 def make_data_var(bv, address, type_, name=None):
     """
     Make a data var of given type and name at address.
