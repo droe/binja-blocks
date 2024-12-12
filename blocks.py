@@ -370,7 +370,7 @@ class BlockLiteral:
         """
         # Packed because block layout bytecode can lead to misaligned words,
         # which according to comments in LLVM source code seems intentional.
-        struct = binja.StructureBuilder.create(packed=True)
+        struct = binja.StructureBuilder.create(packed=True, width=bd.size)
         struct.append(_get_objc_type(self._bv, "Class"), "isa")
         struct.append(self._bv.parse_type_string(f"volatile uint32_t flags")[0], "flags")
         struct.append(self._bv.parse_type_string(f"uint32_t reserved")[0], "reserved")
