@@ -126,8 +126,10 @@ def undoable(func):
     """
     def closure(bv, *args, **kvargs):
         state = bv.begin_undo_actions()
-        func(bv, *args, **kvargs)
-        bv.commit_undo_actions(state)
+        try:
+            func(bv, *args, **kvargs)
+        finally:
+            bv.commit_undo_actions(state)
     closure.__doc__ = func.__doc__
     return closure
 
