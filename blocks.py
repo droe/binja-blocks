@@ -977,7 +977,7 @@ def plugin_cmd_annotate_all_global_blocks(bv, set_progress=None):
 @shinobi.register("Blocks\\Annotate all blocks", is_valid=is_valid)
 @shinobi.background_task("Blocks: All blocks")
 @shinobi.undoable
-def plugin_cmd_annotate_all_stack_blocks(bv, set_progress=None):
+def plugin_cmd_annotate_all_blocks(bv, set_progress=None):
     """
     Look for all occurences of __NSConcreteGlobalBlock and __NSConcreteStackBlock
     and annotate all blocks where references are found.
@@ -985,6 +985,7 @@ def plugin_cmd_annotate_all_stack_blocks(bv, set_progress=None):
     _define_ns_concrete_block_imports(bv)
     annotate_all_global_blocks(bv, set_progress=set_progress)
     annotate_all_stack_blocks(bv, set_progress=set_progress)
+
 
 @shinobi.register_for_address("Blocks\\Remove plugin comment here", is_valid=is_valid)
 @shinobi.background_task("Blocks: Remove comment")
