@@ -795,35 +795,27 @@ def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
             for insn in shinobi.yield_struct_field_assign_hlil_instructions_for_var_id(bl.insn.function, bl.insn.var.identifier):
                 if isinstance(insn.src, binja.HighLevelILAddressOf):
                     insn_src = insn.src
-                elif isinstance(insn.src, (binja.HighLevelILDerefField,
-                                           binja.HighLevelILDeref,
-                                           binja.HighLevelILImport,
-                                           binja.HighLevelILConst,
-                                           binja.HighLevelILConstPtr,
-                                           binja.HighLevelILCall,
-                                           binja.HighLevelILStructField,
-                                           binja.HighLevelILArrayIndex,
-                                           binja.HighLevelILVar)):
-                    # binja.HighLevelILStructField is typically because of Binja bug
-                    # treating d8-15/v8-15 as caller-saved instead of callee-saved.
-                    # binja.HighLevelILVar, binja.HighLevelILArrayIndex are typically
-                    # a byref passed as argument.
-                    insn_src = None
                 else:
-                    print(f"{where}: Skipping assignment right-hand-side for {insn.src!r}, fix plugin", file=sys.stderr)
-                    continue
+                    insn_src = None
+
                 if insn.dest.member_index in byref_indexes_set:
                     byref_srcs.append((insn_src, insn.dest.member_index))
 
-            assert len(byref_srcs) == len(bl.byref_indexes)
+            if len(byref_srcs) != len(byref_indexes_set):
+                byref_srcs_set = set([t[1] for t in byref_srcs])
+                missing_indexes_set = byref_srcs_set - byref_indexes_set
+                missing_indexes_str = ', '.join([str(idx) for idx in sorted(missing_indexes)])
+                print(f"{where}: Warning: Failed to find byref for struct member indexes {missing_indexes_str}, review manually", file=sys.stderr)
+
             for byref_src, byref_member_index in byref_srcs:
                 if byref_src is None:
+                    print(f"{where}: Warning: Byref for struct member index {byref_member_index} is not an AddressOf, review manually", file=sys.stderr)
                     continue
                 assert isinstance(byref_src, binja.HighLevelILAddressOf)
                 if isinstance(byref_src.src, binja.HighLevelILVar):
                     var_id = byref_src.src.var.identifier
                 else:
-                    print(f"{where}: Byref src var {byref_src} src is {type(byref_src.src).__name__}: Annotate manually", file=sys.stderr)
+                    print(f"{where}: Warning: Byref for struct member index {byref_member_index} and src {byref_src} is {type(byref_src.src).__name__}, review manually", file=sys.stderr)
                     continue
 
                 byref_insn = None
