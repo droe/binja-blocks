@@ -380,8 +380,8 @@ class BlockLiteral:
         struct.append(self._bv.parse_type_string(f"uint32_t reserved")[0], "reserved")
         struct.append(_get_libclosure_type(self._bv, "BlockInvokeFunction"), "invoke")
         struct.append(binja.Type.pointer(self._bv.arch, _get_libclosure_type(self._bv, "Block_descriptor_1")), "descriptor") # placeholder
+        self.byref_indexes = []
         if bd.imported_variables_size > 0 and bd.block_has_signature and bd.layout is not None:
-            self.byref_indexes = []
             append_layout_fields(self._bv,
                                  struct,
                                  bd.layout,
