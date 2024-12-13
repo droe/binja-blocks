@@ -917,7 +917,7 @@ def annotate_all_global_blocks(bv, set_progress=None):
         for addr in bv.get_data_refs(sym_addr):
             if set_progress is not None:
                 set_progress(f"{addr:x}")
-            annotate_global_block_literal(bv, addr)
+            annotate_global_block_literal(bv, addr, sym_addrs)
 
 
 def annotate_all_stack_blocks(bv, set_progress=None):
