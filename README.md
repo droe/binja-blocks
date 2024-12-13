@@ -52,6 +52,7 @@ Features:
 
 Known limitations:
 
+-   No support for "small descriptors"
 -   No support for 32-bit architectures
 -   No support for "old GC layout"
 -   No support for older block layout from before the introduction of block descriptors
