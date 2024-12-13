@@ -271,19 +271,34 @@ def append_layout_fields(bv, struct, layout, block_has_extended_layout, byref_in
 
 
 class BlockLiteral:
+    class NotABlockLiteralError(Exception):
+        pass
+
     @classmethod
-    def from_data(cls, bv, bl_data_var):
+    def from_data(cls, bv, bl_data_var, sym_addrs):
         """
         Read block literal from data.
         """
         is_stack_block = False
         br = binja.BinaryReader(bv)
         br.seek(bl_data_var.address)
+
         isa = br.read64()
+        if isa not in sym_addrs:
+            raise BlockLiteral.NotABlockLiteralError("isa is not __NSConcreteGlobalBlock")
+
         flags = br.read32()
+        if (flags & BLOCK_IS_GLOBAL) == 0:
+            raise BlockLiteral.NotABlockLiteralError(f"BLOCK_IS_GLOBAL ({BLOCK_IS_GLOBAL:#010x}) not set in flags")
+
         reserved = br.read32()
+
         invoke = br.read64()
+        if invoke == 0:
+            raise BlockLiteral.NotABlockLiteralError("invoke is NULL")
+
         descriptor = br.read64()
+
         return cls(bv, is_stack_block, bl_data_var, isa, flags, reserved, invoke, descriptor)
 
     @classmethod
@@ -310,10 +325,10 @@ class BlockLiteral:
                         insn.src.constant in sym_addrs:
                     isa = insn.src.constant
                 else:
-                    raise RuntimeError("RHS of isa is not __NSConcreteStackBlock.")
+                    raise BlockLiteral.NotABlockLiteralError("isa is not __NSConcreteStackBlock")
             elif insn.dest.member_index == 1:
                 if isinstance(insn.src, binja.HighLevelILStructField):
-                    raise RuntimeError("RHS of flags is struct field instead of constant.  If d8-d15/v8-v15 then likely because of Binja bug treating them as caller-saved when they are supposed to be callee-saved.")
+                    raise RuntimeError("RHS of flags is struct field instead of constant.  If d/v registers then likely because of Binja failing to simplify HLIL.")
                 if isinstance(insn.src, (binja.HighLevelILConst,
                                          binja.HighLevelILConstPtr)):
                     flags = insn.src.constant
@@ -662,6 +677,15 @@ def annotate_global_block_literal(bv, block_literal_addr, sym_addrs=None):
             print("__NSConcreteGlobalBlock not found, target does not appear to contain any global blocks")
             return
 
+    sects = bv.get_sections_at(block_literal_addr)
+    if sects is None or len(sects) == 0:
+        print(f"{where}: Address is not in a segment", file=sys.stderr)
+        return
+    if any([sect.name in ('libsystem_blocks.dylib::__objc_classlist',
+                          'libsystem_blocks.dylib::__objc_nlclslist') for sect in sects]):
+        print(f"{where}: Address is in an exempted section that does not contain global blocks")
+        return
+
     block_literal_data_var = bv.get_data_var_at(block_literal_addr)
     if block_literal_data_var is None:
         # We only expect this to happen for manual invocation, not
@@ -683,7 +707,7 @@ def annotate_global_block_literal(bv, block_literal_addr, sym_addrs=None):
         return
 
     try:
-        bl = BlockLiteral.from_data(bv, block_literal_data_var)
+        bl = BlockLiteral.from_data(bv, block_literal_data_var, sym_addrs)
         print(bl)
         bd = BlockDescriptor(bv, bl.descriptor, bl.flags)
         print(bd)
@@ -691,6 +715,9 @@ def annotate_global_block_literal(bv, block_literal_addr, sym_addrs=None):
         bd.annotate_descriptor(bl)
         bl.annotate_layout_bytecode(bd)
         bl.annotate_functions(bd)
+    except BlockLiteral.NotABlockLiteralError as e:
+        print(f"{where}: Not a block literal: {e}")
+        return
     except Exception as e:
         print(f"{where}: {type(e).__name__}: {e}\n{traceback.format_exc()}", file=sys.stderr)
         return
@@ -750,6 +777,9 @@ def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
         bd.annotate_descriptor(bl)
         bl.annotate_layout_bytecode(bd)
         bl.annotate_functions(bd)
+    except BlockLiteral.NotABlockLiteralError as e:
+        print(f"{where}: Not a block literal: {e}")
+        return
     except Exception as e:
         print(f"{where}: {type(e).__name__}: {e}\n{traceback.format_exc()}", file=sys.stderr)
         return
