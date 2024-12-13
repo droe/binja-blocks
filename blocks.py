@@ -802,10 +802,12 @@ def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
                                            binja.HighLevelILConstPtr,
                                            binja.HighLevelILCall,
                                            binja.HighLevelILStructField,
+                                           binja.HighLevelILArrayIndex,
                                            binja.HighLevelILVar)):
                     # binja.HighLevelILStructField is typically because of Binja bug
                     # treating d8-15/v8-15 as caller-saved instead of callee-saved.
-                    # binja.HighLevelILVar is typically a byref passed as argument.
+                    # binja.HighLevelILVar, binja.HighLevelILArrayIndex are typically
+                    # a byref passed as argument.
                     insn_src = None
                 else:
                     print(f"{where}: Skipping assignment right-hand-side for {insn.src!r}, fix plugin", file=sys.stderr)
