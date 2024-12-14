@@ -873,8 +873,14 @@ def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
                 byref_struct.append(bv.parse_type_string("uint32_t size")[0], "size")
 
                 byref_insn_var.type = byref_struct
-                byref_insn = shinobi.reload_hlil_instruction(bv, byref_insn)
+                byref_insn = shinobi.reload_hlil_instruction(bv, byref_insn,
+                        lambda insn: \
+                                isinstance(insn, binja.HighLevelILVarDeclare) and \
+                                str(insn.var.type).startswith('struct'))
                 byref_insn_var = byref_insn.var
+
+                # XXX Detect when there are multiple assignments to the same member_index
+                # in different branches and warn accordingly.
 
                 for insn in shinobi.yield_struct_field_assign_hlil_instructions_for_var_id(byref_insn.function, byref_insn_var.identifier):
                     # 0 isa
@@ -890,8 +896,14 @@ def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
                 try:
                     print(f"Block byref at {byref_insn.address:x} flags {byref_flags:08x} size {byref_size:#x}")
                 except UnboundLocalError as e:
-                    print(f"Block byref at {byref_insn.address:x} failed to find flags or size assignments", file=sys.stderr)
+                    print(f"Block byref at {byref_insn.address:x}: Failed to find flags or size assignments", file=sys.stderr)
                     continue
+
+                if byref_size > 0x1000:
+                    print(f"Block byref at {byref_insn.address:x}: Implausible size {byref_size:#x}", file=sys.stderr)
+                    continue
+
+                byref_struct.width = byref_size
 
                 if (byref_flags & BLOCK_BYREF_HAS_COPY_DISPOSE) != 0:
                     byref_struct.append(_get_libclosure_type(bv, "BlockByrefKeepFunction"), "byref_keep")
@@ -901,14 +913,20 @@ def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
                     byref_struct.append(bv.parse_type_string("void *layout")[0], "layout")
                     layout_index = byref_struct.index_by_name("layout")
                     byref_insn_var.type = byref_struct
-                    byref_insn = shinobi.reload_hlil_instruction(bv, byref_insn)
+                    byref_insn = shinobi.reload_hlil_instruction(bv, byref_insn,
+                            lambda insn: \
+                                    isinstance(insn, binja.HighLevelILVarDeclare) and \
+                                    str(insn.var.type).startswith('struct'))
                     byref_insn_var = byref_insn.var
                     for insn in shinobi.yield_struct_field_assign_hlil_instructions_for_var_id(byref_insn.function, byref_insn_var.identifier):
                         if insn.dest.member_index == layout_index:
-                            assert isinstance(insn.src, (binja.HighLevelILConst,
-                                                         binja.HighLevelILConstPtr))
-                            byref_layout = insn.src.constant
-                            break
+                            if isinstance(insn.src, (binja.HighLevelILConst,
+                                                     binja.HighLevelILConstPtr)):
+                                byref_layout = insn.src.constant
+                                break
+                    else:
+                        print(f"Block byref at {byref_insn.address:x}: Failed to find layout assignment")
+                        continue
                     if byref_layout != 0:
                         if byref_layout < 0x1000:
                             byref_struct.replace(layout_index, bv.parse_type_string("uint64_t layout")[0], "layout")

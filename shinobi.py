@@ -197,7 +197,7 @@ def reload_hlil_instruction(bv, hlil_insn, predicate=None):
             reloaded_insn = insn
             break
     else:
-        assert False
+        reloaded_insn = None
     assert reloaded_insn is not None
     return reloaded_insn
 
