@@ -204,6 +204,19 @@ def _define_ns_concrete_block_imports(bv):
             break
 
 
+def _append_with_offset_suffix(self, type_, name):
+    """
+    Append a field with type and name to the StructureBuilder,
+    and append the offset of the field to the name.
+    """
+    self.append(type_, name)
+    self.replace(len(self.members) - 1,
+                 self.members[-1].type,
+                 f"{self.members[-1].name}{self.members[-1].offset:x}")
+    return self
+binja.StructureBuilder.append_with_offset_suffix = _append_with_offset_suffix
+
+
 def append_layout_fields(bv, struct, layout, block_has_extended_layout, byref_indexes=None, layout_end_obj=None):
     """
     Append fields specified by layout to struct.
@@ -221,19 +234,23 @@ def append_layout_fields(bv, struct, layout, block_has_extended_layout, byref_in
         # and we don't know the semantics of the former, so
         # don't attempt annotation.
         return
+
+    id_type = _get_objc_type(bv, "id")
+    u64_type = bv.parse_type_string(f"uint64_t")[0]
+
     if layout < 0x1000:
         # compact encoding
         n_strong_ptrs = (layout >> 8) & 0xf
         n_byref_ptrs = (layout >> 4) & 0xf
         n_weak_ptrs = layout & 0xf
         for _ in range(n_strong_ptrs):
-            struct.append(_get_objc_type(bv, "id"), f"strong_ptr_{struct.width:x}")
+            struct.append_with_offset_suffix(id_type, "strong_ptr_")
         for _ in range(n_byref_ptrs):
             if byref_indexes is not None:
                 byref_indexes.append(len(struct.members))
-            struct.append(_get_objc_type(bv, "id"), f"byref_ptr_{struct.width:x}")
+            struct.append_with_offset_suffix(id_type, "byref_ptr_")
         for _ in range(n_weak_ptrs):
-            struct.append(_get_objc_type(bv, "id"), f"weak_ptr_{struct.width:x}")
+            struct.append_with_offset_suffix(id_type, "weak_ptr_")
     else:
         # bytecode encoding
         br = binja.BinaryReader(bv)
@@ -245,24 +262,24 @@ def append_layout_fields(bv, struct, layout, block_has_extended_layout, byref_in
             if opcode == BLOCK_LAYOUT_ESCAPE:
                 break
             elif opcode == BLOCK_LAYOUT_NON_OBJECT_BYTES:
-                struct.append(bv.parse_type_string(f"uint8_t [{oparg}]")[0], f"non_object_{struct.width:x}")
+                struct.append_with_offset_suffix(bv.parse_type_string(f"uint8_t [{oparg}]")[0], "non_object_")
             elif opcode == BLOCK_LAYOUT_NON_OBJECT_WORDS:
                 for _ in range(oparg):
-                    struct.append(bv.parse_type_string(f"uint64_t")[0], f"non_object_{struct.width:x}")
+                    struct.append_with_offset_suffix(u64_type, f"non_object_")
             elif opcode == BLOCK_LAYOUT_STRONG:
                 for _ in range(oparg):
-                    struct.append(_get_objc_type(bv, "id"), f"strong_ptr_{struct.width:x}")
+                    struct.append_with_offset_suffix(id_type, f"strong_ptr_")
             elif opcode == BLOCK_LAYOUT_BYREF:
                 for _ in range(oparg):
                     if byref_indexes is not None:
                         byref_indexes.append(len(struct.members))
-                    struct.append(_get_objc_type(bv, "id"), f"byref_ptr_{struct.width:x}")
+                    struct.append_with_offset_suffix(id_type, f"byref_ptr_")
             elif opcode == BLOCK_LAYOUT_WEAK:
                 for _ in range(oparg):
-                    struct.append(_get_objc_type(bv, "id"), f"weak_ptr_{struct.width:x}")
+                    struct.append_with_offset_suffix(id_type, f"weak_ptr_")
             elif opcode == BLOCK_LAYOUT_UNRETAINED:
                 for _ in range(oparg):
-                    struct.append(_get_objc_type(bv, "id"), f"unretained_ptr_{struct.width:x}")
+                    struct.append_with_offset_suffix(id_type, f"unretained_ptr_")
             else:
                 print(f"Warning: Unknown extended layout op {op:#04x}")
                 break
