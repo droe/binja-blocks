@@ -305,19 +305,12 @@ class BlockLiteral:
     def from_stack(cls, bv, bl_insn, bl_var, sym_addrs):
         is_stack_block = True
         bl_var.type = _get_libclosure_type(bv, "Block_literal")
-        bl_insn = shinobi.reload_hlil_instruction(bv, bl_insn)
 
-        if isinstance(bl_insn, binja.HighLevelILVarDeclare):
-            stack_var_id = bl_insn.var.identifier
-        elif isinstance(bl_insn, binja.HighLevelILVarInit):
-            stack_var_id = bl_insn.dest.identifier
-        elif isinstance(bl_insn, binja.HighLevelILAssign):
-            if isinstance(bl_insn.dest, binja.HighLevelILStructField):
-                stack_var_id = bl_insn.dest.src.var.identifier
-            else:
-                raise RuntimeError(f"bl_insn.dest after reload is unexpected type {type(bl_insn.dest).__name__}")
-        else:
-            raise RuntimeError(f"bl_insn after reload is unexpected type {type(bl_insn).__name__}")
+        bl_insn = shinobi.reload_hlil_instruction(bv, bl_insn,
+                lambda insn: \
+                        isinstance(insn, binja.HighLevelILVarDeclare) and \
+                        str(insn.var.type) == 'struct Block_literal')
+        stack_var_id = bl_insn.var.identifier
 
         for insn in shinobi.yield_struct_field_assign_hlil_instructions_for_var_id(bl_insn.function, stack_var_id):
             if insn.dest.member_index == 0:

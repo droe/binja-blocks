@@ -179,20 +179,21 @@ def make_data_var(bv, address, type_, name=None):
         data_var.type = type_
 
 
-def reload_hlil_instruction(bv, hlil_insn):
+def reload_hlil_instruction(bv, hlil_insn, predicate=None):
     """
     Refresh the instruction and the function it is associated with.
     This is useful after setting the type of an operand in situations
     where there is a need to examine the instruction and function
     after applying the new type.
-    This is based on the assumption that the HLIL instruction is the
-    first or only HLIL instruction at its address.  If the number of
-    HLIL instructions at the address changes across the reload, then
-    this returns the first instruction at the address.
+    If no predicate is given, return the first instruction at the
+    same address.  If a predicate is given, return the first
+    instruction at the same address that matches the predicate.
     """
     reloaded_func = bv.get_function_at(hlil_insn.function.source_function.start)
     for insn in reloaded_func.hlil.instructions:
         if insn.address == hlil_insn.address:
+            if predicate is not None and not predicate(insn):
+                continue
             reloaded_insn = insn
             break
     else:
