@@ -431,7 +431,10 @@ class BlockLiteral:
             if not stack_var.name.startswith("stack_block_"):
                 stack_var.name = f"stack_block_{stack_var.name}"
             stack_var.type = self.struct_type_name
-            self.insn = shinobi.reload_hlil_instruction(self._bv, self.insn)
+            self.insn = shinobi.reload_hlil_instruction(self._bv, self.insn,
+                    lambda insn: \
+                            isinstance(insn, binja.HighLevelILVarDeclare) and \
+                            str(insn.var.type).startswith('struct Block_literal_'))
         else:
             self.data_var.name = f"global_block_{self.address:x}"
             self.data_var.type = self.struct_type_name
