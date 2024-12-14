@@ -685,7 +685,7 @@ class BlockDescriptor:
 
 
 def annotate_global_block_literal(bv, block_literal_addr, sym_addrs=None):
-    where = f"global block {block_literal_addr:x}"
+    where = f"Global block {block_literal_addr:x}"
 
     print(f"Annotating {where}")
 
@@ -745,7 +745,7 @@ def annotate_global_block_literal(bv, block_literal_addr, sym_addrs=None):
 
 
 def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
-    where = f"stack block {block_literal_insn.address:x}"
+    where = f"Stack block {block_literal_insn.address:x}"
 
     print(f"Annotating {where}")
 
