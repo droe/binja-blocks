@@ -265,21 +265,21 @@ def append_layout_fields(bv, struct, layout, block_has_extended_layout, byref_in
                 struct.append_with_offset_suffix(bv.parse_type_string(f"uint8_t [{oparg}]")[0], "non_object_")
             elif opcode == BLOCK_LAYOUT_NON_OBJECT_WORDS:
                 for _ in range(oparg):
-                    struct.append_with_offset_suffix(u64_type, f"non_object_")
+                    struct.append_with_offset_suffix(u64_type, "non_object_")
             elif opcode == BLOCK_LAYOUT_STRONG:
                 for _ in range(oparg):
-                    struct.append_with_offset_suffix(id_type, f"strong_ptr_")
+                    struct.append_with_offset_suffix(id_type, "strong_ptr_")
             elif opcode == BLOCK_LAYOUT_BYREF:
                 for _ in range(oparg):
                     if byref_indexes is not None:
                         byref_indexes.append(len(struct.members))
-                    struct.append_with_offset_suffix(id_type, f"byref_ptr_")
+                    struct.append_with_offset_suffix(id_type, "byref_ptr_")
             elif opcode == BLOCK_LAYOUT_WEAK:
                 for _ in range(oparg):
-                    struct.append_with_offset_suffix(id_type, f"weak_ptr_")
+                    struct.append_with_offset_suffix(id_type, "weak_ptr_")
             elif opcode == BLOCK_LAYOUT_UNRETAINED:
                 for _ in range(oparg):
-                    struct.append_with_offset_suffix(id_type, f"unretained_ptr_")
+                    struct.append_with_offset_suffix(id_type, "unretained_ptr_")
             else:
                 print(f"Warning: Unknown extended layout op {op:#04x}")
                 break
@@ -940,13 +940,13 @@ def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
                             byref_struct.replace(layout_index, bv.parse_type_string("uint8_t const *layout")[0], "layout")
                     append_layout_fields(bv, byref_struct, byref_layout, block_has_extended_layout=True)
                 elif byref_layout_nibble == BLOCK_BYREF_LAYOUT_NON_OBJECT:
-                    byref_struct.append(bv.parse_type_string("uint64_t non_object_0")[0], "non_object_0")
+                    byref_struct.append_with_offset_suffix(bv.parse_type_string("uint64_t non_object")[0], "non_object_")
                 elif byref_layout_nibble == BLOCK_BYREF_LAYOUT_STRONG:
-                    byref_struct.append(_get_objc_type(bv, "id"), "strong_ptr_0")
+                    byref_struct.append_with_offset_suffix(_get_objc_type(bv, "id"), "strong_ptr_")
                 elif byref_layout_nibble == BLOCK_BYREF_LAYOUT_WEAK:
-                    byref_struct.append(_get_objc_type(bv, "id"), "weak_ptr_0")
+                    byref_struct.append_with_offset_suffix(_get_objc_type(bv, "id"), "weak_ptr_")
                 elif byref_layout_nibble == BLOCK_BYREF_LAYOUT_UNRETAINED:
-                    byref_struct.append(_get_objc_type(bv, "id"), "unretained_ptr_0")
+                    byref_struct.append_with_offset_suffix(_get_objc_type(bv, "id"), "unretained_ptr_")
 
                 byref_struct_name = f"Block_byref_{byref_insn.address:x}"
                 bv.define_type(binja.Type.generate_auto_type_id(_TYPE_ID_SOURCE, byref_struct_name), byref_struct_name, byref_struct)
@@ -989,9 +989,9 @@ def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
                                                      binja.HighLevelILConstPtr)):
                                 byref_destroy = insn.src.constant
                     if byref_keep is None:
-                        print(f"Block byref at {byref_insn.address:x}: Failed to find keep assignment")
+                        print(f"Block byref at {byref_insn.address:x}: Failed to find keep assignment", file=sys.stderr)
                     if byref_destroy is None:
-                        print(f"Block byref at {byref_insn.address:x}: Failed to find destroy assignment")
+                        print(f"Block byref at {byref_insn.address:x}: Failed to find destroy assignment", file=sys.stderr)
                     if byref_keep is None and byref_destroy is None:
                         continue
 
