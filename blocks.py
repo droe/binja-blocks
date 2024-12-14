@@ -274,6 +274,9 @@ class BlockLiteral:
     class NotABlockLiteralError(Exception):
         pass
 
+    class FailedToFindFieldsError(Exception):
+        pass
+
     @classmethod
     def from_data(cls, bv, bl_data_var, sym_addrs):
         """
@@ -308,9 +311,11 @@ class BlockLiteral:
 
         bl_insn = shinobi.reload_hlil_instruction(bv, bl_insn,
                 lambda insn: \
-                        isinstance(insn, binja.HighLevelILVarDeclare) and \
-                        str(insn.var.type) == 'struct Block_literal')
-        stack_var_id = bl_insn.var.identifier
+                        isinstance(insn, binja.HighLevelILAssign) and \
+                        isinstance(insn.dest, binja.HighLevelILStructField) and \
+                        isinstance(insn.dest.src, binja.HighLevelILVar) and \
+                        str(insn.dest.src.var.type) == 'struct Block_literal')
+        stack_var_id = bl_insn.dest.src.var.identifier
 
         for insn in shinobi.yield_struct_field_assign_hlil_instructions_for_var_id(bl_insn.function, stack_var_id):
             if insn.dest.member_index == 0:
@@ -320,8 +325,6 @@ class BlockLiteral:
                 else:
                     raise BlockLiteral.NotABlockLiteralError("isa is not __NSConcreteStackBlock")
             elif insn.dest.member_index == 1:
-                if isinstance(insn.src, binja.HighLevelILStructField):
-                    raise RuntimeError("RHS of flags is struct field instead of constant.  If d/v registers then likely because of Binja failing to simplify HLIL.")
                 if isinstance(insn.src, (binja.HighLevelILConst,
                                          binja.HighLevelILConstPtr)):
                     flags = insn.src.constant
@@ -349,6 +352,10 @@ class BlockLiteral:
             local_vars = locals()
             if all([vn in local_vars for vn in ('isa', 'flags', 'reserved', 'invoke', 'descriptor')]):
                 break
+        local_vars = locals()
+        missing_vars = list(filter(lambda vn: vn not in local_vars, ('isa', 'flags', 'reserved', 'invoke', 'descriptor')))
+        if len(missing_vars) > 0:
+            raise BlockLiteral.FailedToFindFieldsError(f"{', '.join(missing_vars)}; likely due to complex HLIL")
         return cls(bv, is_stack_block, bl_insn, isa, flags, reserved, invoke, descriptor)
 
     def __init__(self, bv, is_stack_block, insn_or_data_var, isa, flags, reserved, invoke, descriptor):
@@ -408,15 +415,10 @@ class BlockLiteral:
         self.struct_type = self._bv.parse_type_string(self.struct_type_name)[0]
         assert self.struct_type is not None
         if self.is_stack_block:
-            if isinstance(self.insn, binja.HighLevelILVarDeclare):
-                stack_var = self.insn.var
-            elif isinstance(self.insn, binja.HighLevelILAssign):
-                if isinstance(self.insn.dest, binja.HighLevelILStructField):
-                    stack_var = self.insn.dest.src.var
-                else:
-                    raise RuntimeError(f"self.insn.dest is unexpected type {type(self.insn.dest).__name__}")
-            else:
-                raise RuntimeError(f"self.insn is unexpected type {type(self.insn).__name__}")
+            assert isinstance(self.insn, binja.HighLevelILAssign)
+            assert isinstance(self.insn.dest, binja.HighLevelILStructField)
+            assert isinstance(self.insn.dest.src, binja.HighLevelILVar)
+            stack_var = self.insn.dest.src.var
             stack_var_type_name = str(stack_var.type)
             if stack_var_type_name.startswith("struct Block_literal_") and stack_var_type_name != self.struct_type_name:
                 # Stack var has already been annotated for initialization code
@@ -433,8 +435,10 @@ class BlockLiteral:
             stack_var.type = self.struct_type_name
             self.insn = shinobi.reload_hlil_instruction(self._bv, self.insn,
                     lambda insn: \
-                            isinstance(insn, binja.HighLevelILVarDeclare) and \
-                            str(insn.var.type).startswith('struct Block_literal_'))
+                            isinstance(insn, binja.HighLevelILAssign) and \
+                            isinstance(insn.dest, binja.HighLevelILStructField) and \
+                            isinstance(insn.dest.src, binja.HighLevelILVar) and \
+                            str(insn.dest.src.var.type).startswith('struct Block_literal_'))
         else:
             self.data_var.name = f"global_block_{self.address:x}"
             self.data_var.type = self.struct_type_name
@@ -714,6 +718,9 @@ def annotate_global_block_literal(bv, block_literal_addr, sym_addrs=None):
     except BlockLiteral.NotABlockLiteralError as e:
         print(f"{where}: Not a block literal: {e}")
         return
+    except BlockLiteral.FailedToFindFieldsError as e:
+        print(f"{where}: Failed to find fields: {e}", file=sys.stderr)
+        return
     except Exception as e:
         print(f"{where}: {type(e).__name__}: {e}\n{traceback.format_exc()}", file=sys.stderr)
         return
@@ -776,6 +783,9 @@ def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
     except BlockLiteral.NotABlockLiteralError as e:
         print(f"{where}: Not a block literal: {e}")
         return
+    except BlockLiteral.FailedToFindFieldsError as e:
+        print(f"{where}: Failed to find fields: {e}", file=sys.stderr)
+        return
     except Exception as e:
         print(f"{where}: {type(e).__name__}: {e}\n{traceback.format_exc()}", file=sys.stderr)
         return
@@ -788,7 +798,7 @@ def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
         if bd.imported_variables_size > 0 and len(bl.byref_indexes) > 0:
             byref_srcs = []
             byref_indexes_set = set(bl.byref_indexes)
-            for insn in shinobi.yield_struct_field_assign_hlil_instructions_for_var_id(bl.insn.function, bl.insn.var.identifier):
+            for insn in shinobi.yield_struct_field_assign_hlil_instructions_for_var_id(bl.insn.function, bl.insn.dest.src.var.identifier):
                 if isinstance(insn.src, binja.HighLevelILAddressOf):
                     insn_src = insn.src
                 else:
