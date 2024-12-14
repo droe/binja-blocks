@@ -44,8 +44,9 @@ Features:
     signature
 -   Annotate block descriptors and copy/dispose functions
 -   Annotate stack byrefs (`__block` variables) for non-extended layout as
-    well as extended layout with compact or bytecode layout encodings
--   Define per-block named structs to allow for manual fixups
+    well as extended layout with compact or bytecode layout encodings,
+    including keep and destroy functions
+-   Define per-block and per-byref named structs to allow for manual fixups
 -   Define structs for fully manual annotation: `Block_literal`,
     `Block_descriptor_1`, `Block_descriptor_2`, `Block_descriptor_3`,
     `Block_byref_1`, `Block_byref_2`, `Block_byref_3`.

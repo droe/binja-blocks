@@ -99,8 +99,8 @@ typedef void(*BlockByrefKeepFunction)(struct Block_byref*, struct Block_byref*);
 typedef void(*BlockByrefDestroyFunction)(struct Block_byref *);
 
 struct Block_byref_2 {
-    BlockByrefKeepFunction byref_keep;
-    BlockByrefDestroyFunction byref_destroy;
+    BlockByrefKeepFunction keep;
+    BlockByrefDestroyFunction destroy;
 };
 
 struct Block_byref_3 {
@@ -561,10 +561,12 @@ class BlockLiteral:
             dispose_func = self._bv.get_function_at(bd.dispose)
             if copy_func is not None or dispose_func is not None:
                 if copy_func is not None:
-                    copy_func.type = binja.Type.function(binja.Type.void(), [binja.Type.pointer(self._bv.arch, self.struct_type),
-                                                                             binja.Type.pointer(self._bv.arch, self.struct_type)])
+                    copy_func.type = binja.Type.function(binja.Type.void(),
+                                                         [binja.Type.pointer(self._bv.arch, self.struct_type),
+                                                          binja.Type.pointer(self._bv.arch, self.struct_type)])
                 if dispose_func is not None:
-                    dispose_func.type = binja.Type.function(binja.Type.void(), [binja.Type.pointer(self._bv.arch, self.struct_type)])
+                    dispose_func.type = binja.Type.function(binja.Type.void(),
+                                                            [binja.Type.pointer(self._bv.arch, self.struct_type)])
                 self._bv.update_analysis_and_wait()
 
                 if copy_func is not None:
@@ -620,7 +622,6 @@ class BlockDescriptor:
     def imported_variables_size(self):
         return self.size - 0x20
 
-    # XXX clean these up, probably want to move them to bl, pass bl to ctor
     @property
     def block_has_copy_dispose(self):
         return (self.block_flags & BLOCK_HAS_COPY_DISPOSE) != 0
@@ -813,6 +814,8 @@ def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
 
     try:
         if bd.imported_variables_size > 0 and len(bl.byref_indexes) > 0:
+
+            # collect byref_srcs
             byref_srcs = []
             byref_indexes_set = set(bl.byref_indexes)
             for insn in shinobi.yield_struct_field_assign_hlil_instructions_for_var_id(bl.insn.function, bl.insn.dest.src.var.identifier):
@@ -824,12 +827,14 @@ def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
                 if insn.dest.member_index in byref_indexes_set:
                     byref_srcs.append((insn_src, insn.dest.member_index))
 
+            # check number of byref_srcs
             if len(byref_srcs) != len(byref_indexes_set):
                 byref_srcs_set = set([t[1] for t in byref_srcs])
                 missing_indexes_set = byref_srcs_set - byref_indexes_set
                 missing_indexes_str = ', '.join([str(idx) for idx in sorted(missing_indexes)])
                 print(f"{where}: Warning: Failed to find byref for struct member indexes {missing_indexes_str}, review manually", file=sys.stderr)
 
+            # process byref_srcs
             for byref_src, byref_member_index in byref_srcs:
                 if byref_src is None:
                     print(f"{where}: Warning: Byref for struct member index {byref_member_index} is not an AddressOf, review manually", file=sys.stderr)
@@ -906,8 +911,8 @@ def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
                 byref_struct.width = byref_size
 
                 if (byref_flags & BLOCK_BYREF_HAS_COPY_DISPOSE) != 0:
-                    byref_struct.append(_get_libclosure_type(bv, "BlockByrefKeepFunction"), "byref_keep")
-                    byref_struct.append(_get_libclosure_type(bv, "BlockByrefDestroyFunction"), "byref_destroy")
+                    byref_struct.append(_get_libclosure_type(bv, "BlockByrefKeepFunction"), "keep")
+                    byref_struct.append(_get_libclosure_type(bv, "BlockByrefDestroyFunction"), "destroy")
                 byref_layout_nibble = (byref_flags & BLOCK_BYREF_LAYOUT_MASK)
                 if byref_layout_nibble == BLOCK_BYREF_LAYOUT_EXTENDED:
                     byref_struct.append(bv.parse_type_string("void *layout")[0], "layout")
@@ -926,7 +931,8 @@ def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
                                 break
                     else:
                         print(f"Block byref at {byref_insn.address:x}: Failed to find layout assignment")
-                        continue
+                        byref_layout = 0
+
                     if byref_layout != 0:
                         if byref_layout < 0x1000:
                             byref_struct.replace(layout_index, bv.parse_type_string("uint64_t layout")[0], "layout")
@@ -954,6 +960,11 @@ def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
                 byref_struct_type = bv.parse_type_string(byref_struct_type_name)[0]
 
                 byref_insn_var.type = byref_struct_type
+                byref_insn = shinobi.reload_hlil_instruction(bv, byref_insn,
+                        lambda insn: \
+                                isinstance(insn, binja.HighLevelILVarDeclare) and \
+                                str(insn.var.type).startswith('struct'))
+                byref_insn_var = byref_insn.var
 
                 # propagate byref type to block literal type
                 byref_member_name = bl.struct_builder.members[byref_member_index].name
@@ -962,10 +973,65 @@ def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
                 bv.define_type(binja.Type.generate_auto_type_id(_TYPE_ID_SOURCE, bl.struct_name), bl.struct_name, bl.struct_builder)
                 bl.struct_type = bv.parse_type_string(bl.struct_type_name)[0]
 
-                # XXX annotate functions, which is often hard with the use of
-                # callee-saved D/V registers treated as caller-saved in HLIL;
-                # it seems that Binja does not properly deal with the fact that
-                # D8-15 are callee-saved but the rest of V8-15 are caller-saved.
+                # annotate functions
+                if (byref_flags & BLOCK_BYREF_HAS_COPY_DISPOSE) != 0:
+                    keep_index = byref_struct.index_by_name("keep")
+                    destroy_index = byref_struct.index_by_name("destroy")
+                    byref_keep = None
+                    byref_destroy = None
+                    for insn in shinobi.yield_struct_field_assign_hlil_instructions_for_var_id(byref_insn.function, byref_insn_var.identifier):
+                        if insn.dest.member_index == keep_index:
+                            if isinstance(insn.src, (binja.HighLevelILConst,
+                                                     binja.HighLevelILConstPtr)):
+                                byref_keep = insn.src.constant
+                        elif insn.dest.member_index == destroy_index:
+                            if isinstance(insn.src, (binja.HighLevelILConst,
+                                                     binja.HighLevelILConstPtr)):
+                                byref_destroy = insn.src.constant
+                    if byref_keep is None:
+                        print(f"Block byref at {byref_insn.address:x}: Failed to find keep assignment")
+                    if byref_destroy is None:
+                        print(f"Block byref at {byref_insn.address:x}: Failed to find destroy assignment")
+                    if byref_keep is None and byref_destroy is None:
+                        continue
+
+                    # Interleave annotation of the two functions in order to minimize
+                    # the number of expensive calls to update_analysis_and_wait().
+                    if byref_keep is not None:
+                        keep_func = bv.get_function_at(byref_keep)
+                    else:
+                        keep_func = None
+                    if byref_destroy is not None:
+                        destroy_func = bv.get_function_at(byref_destroy)
+                    else:
+                        destroy_func
+                    if keep_func is not None or destroy_func is not None:
+                        if keep_func is not None:
+                            keep_func.type = binja.Type.function(binja.Type.void(),
+                                                                 [binja.Type.pointer(bv.arch, byref_struct_type),
+                                                                  binja.Type.pointer(bv.arch, byref_struct_type)])
+                        if destroy_func is not None:
+                            destroy_func.type = binja.Type.function(binja.Type.void(),
+                                                                    [binja.Type.pointer(bv.arch, byref_struct_type)])
+                        bv.update_analysis_and_wait()
+
+                        if keep_func is not None:
+                            if len(keep_func.parameter_vars) >= 2:
+                                keep_func.parameter_vars[0].set_name_async("dst")
+                                keep_func.parameter_vars[1].set_name_async("src")
+                        if destroy_func is not None:
+                            if len(destroy_func.parameter_vars) >= 1:
+                                destroy_func.parameter_vars[0].set_name_async("dst")
+                        bv.update_analysis_and_wait()
+
+                        if keep_func is not None:
+                            if keep_func.name == f"sub_{keep_func.start:x}":
+                                keep_func.name = f"sub_{keep_func.start:x}_byref_keep"
+
+                        if destroy_func is not None:
+                            if destroy_func.name == f"sub_{destroy_func.start:x}":
+                                destroy_func.name = f"sub_{destroy_func.start:x}_byref_destroy"
+
 
     except Exception as e:
         print(f"{where}: {type(e).__name__}: {e}\n{traceback.format_exc()}", file=sys.stderr)
