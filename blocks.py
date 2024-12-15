@@ -136,6 +136,7 @@ BLOCK_HAS_EXTENDED_LAYOUT       = 0x80000000
 BLOCK_HAS_SIGNATURE             = 0x40000000
 BLOCK_IS_GLOBAL                 = 0x10000000
 BLOCK_HAS_COPY_DISPOSE          = 0x02000000
+BLOCK_SMALL_DESCRIPTOR          = 0x00400000
 
 BLOCK_BYREF_HAS_COPY_DISPOSE    = 0x02000000
 BLOCK_BYREF_LAYOUT_MASK         = 0x70000000
@@ -630,6 +631,9 @@ class BlockDescriptor:
         self.address = descriptor_address
         self.block_flags = block_flags
 
+        if self.block_has_small_descriptor:
+            raise NotImplementedError("Block has small descriptor, see https://github.com/droe/binja-blocks/issues/19")
+
         br = binja.BinaryReader(self._bv)
         br.seek(self.address)
 
@@ -639,6 +643,7 @@ class BlockDescriptor:
             # u32 flags
             # u32 reserved
             self.flags = self.reserved & 0xFFFFFFFF
+            assert self.flags == block_flags & ~BLOCK_SMALL_DESCRIPTOR
         else:
             # u64 reserved
             self.flags = None
@@ -683,6 +688,10 @@ class BlockDescriptor:
     @property
     def block_is_global(self):
         return (self.block_flags & BLOCK_IS_GLOBAL) != 0
+
+    @property
+    def block_has_small_descriptor(self):
+        return (self.block_flags & BLOCK_SMALL_DESCRIPTOR) != 0
 
     def __str__(self):
         if self.flags:
