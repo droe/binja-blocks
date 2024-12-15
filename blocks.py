@@ -161,7 +161,10 @@ def _get_custom_type_internal(bv, name, typestr, source, dependency=None):
         if name is not None:
             return bv.get_type_by_name(name)
         else:
-            return bv.parse_type_string(typestr)[0]
+            try:
+                return bv.parse_type_string(typestr)[0]
+            except SyntaxError:
+                return None
 
     type_ = make_type()
     if type_ is not None:
@@ -223,7 +226,7 @@ def _define_ns_concrete_block_imports(bv):
     Make sure __NSConcreteGlobalBlock and __NSConcreteStackBlock are defined
     appropriately.
     """
-    objc_class_type = _get_objc_type(bv, "Class")
+    objc_class_type = _parse_objc_type(bv, "Class")
     for sym_name in ("__NSConcreteGlobalBlock", "__NSConcreteStackBlock"):
         for sym_type in (binja.SymbolType.ExternalSymbol, binja.SymbolType.DataSymbol):
             sym = shinobi.get_symbol_of_type(bv, sym_name, sym_type)
@@ -266,7 +269,7 @@ def append_layout_fields(bv, struct, layout, block_has_extended_layout, byref_in
         # don't attempt annotation.
         return
 
-    id_type = _get_objc_type(bv, "id")
+    id_type = _parse_objc_type(bv, "id")
     u64_type = bv.parse_type_string(f"uint64_t")[0]
 
     if layout < 0x1000:
@@ -355,7 +358,7 @@ class BlockLiteral:
     @classmethod
     def from_stack(cls, bv, bl_insn, bl_var, sym_addrs):
         is_stack_block = True
-        bl_var.type = _get_libclosure_type(bv, "Block_literal")
+        bl_var.type = _parse_libclosure_type(bv, "struct Block_literal")
 
         bl_insn = shinobi.reload_hlil_instruction(bv, bl_insn,
                 lambda insn: \
@@ -443,11 +446,11 @@ class BlockLiteral:
         # Packed because block layout bytecode can lead to misaligned words,
         # which according to comments in LLVM source code seems intentional.
         struct = binja.StructureBuilder.create(packed=True, width=bd.size)
-        struct.append(_get_objc_type(self._bv, "Class"), "isa")
+        struct.append(_parse_objc_type(self._bv, "Class"), "isa")
         struct.append(_parse_libclosure_type(self._bv, "enum Block_flags"), "flags")
         struct.append(self._bv.parse_type_string("uint32_t reserved")[0], "reserved")
         struct.append(_get_libclosure_type(self._bv, "BlockInvokeFunction"), "invoke")
-        struct.append(binja.Type.pointer(self._bv.arch, _get_libclosure_type(self._bv, "Block_descriptor_1")), "descriptor") # placeholder
+        struct.append(binja.Type.pointer(self._bv.arch, _parse_libclosure_type(self._bv, "struct Block_descriptor_1")), "descriptor") # placeholder
         self.byref_indexes = []
         if bd.imported_variables_size > 0 and bd.block_has_signature and bd.layout is not None:
             append_layout_fields(self._bv,
@@ -762,7 +765,7 @@ def annotate_global_block_literal(bv, block_literal_addr, sym_addrs=None):
         # We only expect this to happen for manual invocation, not
         # for the automatic sweep, as the sweep requires data
         # references in order to pick up a global block instance.
-        class_type = _get_objc_type(bv, "Class")
+        class_type = _parse_objc_type(bv, "Class")
         bv.define_user_data_var(block_literal_addr, binja.Type.pointer(bv.arch, class_type))
         block_literal_data_var = bv.get_data_var_at(block_literal_addr)
         assert block_literal_data_var is not None
@@ -925,7 +928,7 @@ def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
                 byref_insn_var.name = f"block_byref_{byref_insn_var.name}"
 
                 byref_struct = binja.StructureBuilder.create()
-                byref_struct.append(_get_objc_type(bv, "Class"), "isa")
+                byref_struct.append(_parse_objc_type(bv, "Class"), "isa")
                 byref_struct.append(bv.parse_type_string("void *forwarding")[0], "forwarding") # placeholder
                 byref_struct.append(_parse_libclosure_type(bv, "enum Block_byref_flags"), "flags")
                 byref_struct.append(bv.parse_type_string("uint32_t size")[0], "size")
@@ -995,11 +998,11 @@ def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
                 elif byref_layout_nibble == BLOCK_BYREF_LAYOUT_NON_OBJECT:
                     byref_struct.append_with_offset_suffix(bv.parse_type_string("uint64_t non_object")[0], "non_object_")
                 elif byref_layout_nibble == BLOCK_BYREF_LAYOUT_STRONG:
-                    byref_struct.append_with_offset_suffix(_get_objc_type(bv, "id"), "strong_ptr_")
+                    byref_struct.append_with_offset_suffix(_parse_objc_type(bv, "id"), "strong_ptr_")
                 elif byref_layout_nibble == BLOCK_BYREF_LAYOUT_WEAK:
-                    byref_struct.append_with_offset_suffix(_get_objc_type(bv, "id"), "weak_ptr_")
+                    byref_struct.append_with_offset_suffix(_parse_objc_type(bv, "id"), "weak_ptr_")
                 elif byref_layout_nibble == BLOCK_BYREF_LAYOUT_UNRETAINED:
-                    byref_struct.append_with_offset_suffix(_get_objc_type(bv, "id"), "unretained_ptr_")
+                    byref_struct.append_with_offset_suffix(_parse_objc_type(bv, "id"), "unretained_ptr_")
 
                 byref_struct_name = f"Block_byref_{byref_insn.address:x}"
                 bv.define_type(binja.Type.generate_auto_type_id(_TYPE_ID_SOURCE, byref_struct_name), byref_struct_name, byref_struct)
