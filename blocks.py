@@ -478,7 +478,7 @@ class BlockLiteral:
                 # Unfortunately, this seems to be a hypothetical situation
                 # right now, as Binja does not seem to handle different use of
                 # the same stack area by different branches gracefully.
-                self._bv.set_comment_at(self.address, f"Apple Blocks Plugin:\nStack var {stack_var.name} already annotated with type {stack_var_type_name}.\nDefined {self.struct_type_name} but did not clobber var type.\nSplitting the stack var might help here.")
+                print(f"Block literal at {self.address:x}: Stack var {stack_var.name} already annotated with type {stack_var_type_name}; defined {self.struct_type_name} but did not clobber var type, splitting the stack var might help", file=sys.stderr)
                 return
 
             if not stack_var.name.startswith("stack_block_"):
@@ -1192,6 +1192,9 @@ def plugin_cmd_annotate_all_blocks(bv, set_progress=None):
     annotate_all_stack_blocks(bv, set_progress=set_progress)
 
 
+# This is no longer a useful command as the plugin no longer sets any comments.
+# However, folks still have Binja databases with comments where having this
+# command is still useful despite the plugin not adding these any longer.
 @shinobi.register_for_address("Blocks\\Remove plugin comment here", is_valid=is_valid)
 @shinobi.background_task("Blocks: Remove comment")
 @shinobi.undoable
