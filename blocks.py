@@ -598,15 +598,23 @@ class BlockDescriptor:
 
         br = binja.BinaryReader(self._bv)
         br.seek(self.address)
+
         self.reserved = br.read64()
+        if self.reserved != 0:
+            self.flags = self.reserved
+        else:
+            self.flags = None
+
         self.size = br.read64()
         assert self.size >= 0x20
+
         if self.block_has_copy_dispose:
             self.copy = br.read64()
             self.dispose = br.read64()
         else:
             self.copy = None
             self.dispose = None
+
         if self.block_has_signature:
             self.signature = br.read64()
             if self.signature != 0:
@@ -646,7 +654,11 @@ class BlockDescriptor:
         Annotate block descriptor.
         """
         struct = binja.StructureBuilder.create()
-        struct.append(self._bv.parse_type_string("uint64_t reserved")[0], "reserved")
+        if self.reserved == 0:
+            struct.append(self._bv.parse_type_string("uint64_t reserved")[0], "reserved")
+        else:
+            assert self.flags is not None
+            struct.append(self._bv.parse_type_string("uint64_t flags")[0], "flags")
         struct.append(self._bv.parse_type_string("uint64_t size")[0], "size")
         if self.block_has_copy_dispose:
             struct.append(_get_libclosure_type(self._bv, "BlockCopyFunction"), "copy")
