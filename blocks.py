@@ -54,7 +54,7 @@ typedef struct objc_object* id;
 """
 
 _LIBCLOSURE_TYPE_SOURCE = """
-enum BLOCK_LITERAL_FLAGS : uint32_t {
+enum Block_flags : uint32_t {
     BLOCK_DEALLOCATING              = 0x0001U,      // runtime
     BLOCK_REFCOUNT_MASK             = 0xfffeU,      // runtime
     BLOCK_INLINE_LAYOUT_STRING      = 1U << 21,     // compiler
@@ -70,7 +70,7 @@ enum BLOCK_LITERAL_FLAGS : uint32_t {
     BLOCK_HAS_EXTENDED_LAYOUT       = 1U << 31,     // compiler
 };
 
-enum BLOCK_BYREF_FLAGS : uint32_t {
+enum Block_byref_flags : uint32_t {
     BLOCK_BYREF_DEALLOCATING        = 0x0001U,      // runtime
     BLOCK_BYREF_REFCOUNT_MASK       = 0xfffeU,      // runtime
     BLOCK_BYREF_NEEDS_FREE          = 1U << 24,     // runtime
@@ -91,7 +91,7 @@ typedef void(*BlockInvokeFunction)(void *, ...);
 struct Block_byref_1 {
     Class isa;
     struct Block_byref_1 *forwarding;
-    volatile uint32_t flags;
+    volatile enum Block_byref_flags flags;
     uint32_t size;
 };
 
@@ -108,7 +108,8 @@ struct Block_byref_3 {
 };
 
 struct Block_descriptor_1 {
-    uint64_t reserved;
+    enum Block_flags flags;
+    uint32_t reserved;
     uint64_t size;
 };
 
@@ -124,11 +125,10 @@ struct Block_descriptor_3 {
 
 struct Block_literal {
     Class isa;
-    volatile uint32_t flags;
+    volatile enum Block_flags flags;
     uint32_t reserved;
     BlockInvokeFunction invoke;
     struct Block_descriptor_1 *descriptor;
-    // ... imported variables
 };
 """
 
@@ -154,36 +154,67 @@ BLOCK_LAYOUT_WEAK               = 0x5   # lo nibble # weak pointers
 BLOCK_LAYOUT_UNRETAINED         = 0x6   # lo nibble # unretained pointers
 
 
-def _get_custom_type(bv, name, source):
-    type_ = bv.get_type_by_name(name)
+def _get_custom_type_internal(bv, name, typestr, source, dependency=None):
+    assert (name is None) != (typestr is None)
+
+    def make_type():
+        if name is not None:
+            return bv.get_type_by_name(name)
+        else:
+            return bv.parse_type_string(typestr)[0]
+
+    type_ = make_type()
     if type_ is not None:
         return type_
+
+    if dependency is not None:
+        dependency()
+
     types = bv.parse_types_from_string(source)
     bv.define_types([(binja.Type.generate_auto_type_id(_TYPE_ID_SOURCE, k), k, v) for k, v in types.types.items()], None)
-    type_ = bv.get_type_by_name(name)
+
+    type_ = make_type()
     assert type_ is not None
     return type_
 
 
 def _get_objc_type(bv, name):
     """
-    These are only loaded by Binary Ninja if it detects Objective C.
-    However, libclosure can be used without Objective C and we still
-    need these types.
+    Get a type object for an Objective-C type that we ship stand-in
+    types for, by name.  For a struct or an enum, this returns an
+    anonymous struct or enum, not a reference to the named type.
     """
-    return _get_custom_type(bv, name, _OBJC_TYPE_SOURCE)
+    return _get_custom_type_internal(bv, name, None, _OBJC_TYPE_SOURCE)
+
+
+def _parse_objc_type(bv, typestr):
+    """
+    Parse a type string containing Objective-C types that we ship
+    standin types for.  When passed "struct Foo" or "enum Foo",
+    returns a reference to a named type, suitable for annotating
+    field members.
+    """
+    return _get_custom_type_internal(bv, None, typestr, _OBJC_TYPE_SOURCE)
 
 
 def _get_libclosure_type(bv, name):
     """
-    Get a type shipped with the plugin.
-    On first use, will define all types
-    come with the plugin.
+    Get a type object for a libclosure type that we ship with
+    the plugin, by name.  For a struct or an enum, this returns an
+    anonymous struct or enum, not a reference to the named type.
     """
-    # Make sure the ObjC types we use in _LIBCLOSURE_TYPE_SOURCE
-    # are present before parsing.
-    _ = _get_objc_type(bv, "Class")
-    return _get_custom_type(bv, name, _LIBCLOSURE_TYPE_SOURCE)
+    return _get_custom_type_internal(bv, name, None, _LIBCLOSURE_TYPE_SOURCE,
+                                     lambda: _get_objc_type(bv, "Class"))
+
+
+def _parse_libclosure_type(bv, typestr):
+    """
+    Parse a type string containing libclosure types that we ship with
+    the plugin.  When passed "struct Foo" or "enum Foo", returns a
+    reference to a named type, suitable for annotating field members.
+    """
+    return _get_custom_type_internal(bv, None, typestr, _LIBCLOSURE_TYPE_SOURCE,
+                                     lambda: _get_objc_type(bv, "Class"))
 
 
 def _define_ns_concrete_block_imports(bv):
@@ -413,8 +444,8 @@ class BlockLiteral:
         # which according to comments in LLVM source code seems intentional.
         struct = binja.StructureBuilder.create(packed=True, width=bd.size)
         struct.append(_get_objc_type(self._bv, "Class"), "isa")
-        struct.append(self._bv.parse_type_string(f"volatile uint32_t flags")[0], "flags")
-        struct.append(self._bv.parse_type_string(f"uint32_t reserved")[0], "reserved")
+        struct.append(_parse_libclosure_type(self._bv, "enum Block_flags"), "flags")
+        struct.append(self._bv.parse_type_string("uint32_t reserved")[0], "reserved")
         struct.append(_get_libclosure_type(self._bv, "BlockInvokeFunction"), "invoke")
         struct.append(binja.Type.pointer(self._bv.arch, _get_libclosure_type(self._bv, "Block_descriptor_1")), "descriptor") # placeholder
         self.byref_indexes = []
@@ -600,9 +631,13 @@ class BlockDescriptor:
         br.seek(self.address)
 
         self.reserved = br.read64()
+        # in-descriptor flags
         if self.reserved != 0:
-            self.flags = self.reserved
+            # u32 flags
+            # u32 reserved
+            self.flags = self.reserved & 0xFFFFFFFF
         else:
+            # u64 reserved
             self.flags = None
 
         self.size = br.read64()
@@ -647,7 +682,11 @@ class BlockDescriptor:
         return (self.block_flags & BLOCK_IS_GLOBAL) != 0
 
     def __str__(self):
-        return f"Block descriptor at {self.address:x} size {self.size:#x}"
+        if self.flags:
+            flags_s = f" flags {self.flags:x}"
+        else:
+            flags_s = ""
+        return f"Block descriptor at {self.address:x} size {self.size:#x}{flags_s}"
 
     def annotate_descriptor(self, bl):
         """
@@ -658,7 +697,9 @@ class BlockDescriptor:
             struct.append(self._bv.parse_type_string("uint64_t reserved")[0], "reserved")
         else:
             assert self.flags is not None
-            struct.append(self._bv.parse_type_string("uint64_t flags")[0], "flags")
+            struct.append(_parse_libclosure_type(self._bv, "enum Block_flags"), "flags")
+            struct.append(self._bv.parse_type_string("uint32_t reserved")[0], "reserved")
+        assert struct.width == 8
         struct.append(self._bv.parse_type_string("uint64_t size")[0], "size")
         if self.block_has_copy_dispose:
             struct.append(_get_libclosure_type(self._bv, "BlockCopyFunction"), "copy")
@@ -886,7 +927,7 @@ def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
                 byref_struct = binja.StructureBuilder.create()
                 byref_struct.append(_get_objc_type(bv, "Class"), "isa")
                 byref_struct.append(bv.parse_type_string("void *forwarding")[0], "forwarding") # placeholder
-                byref_struct.append(bv.parse_type_string("volatile int32_t flags")[0], "flags")
+                byref_struct.append(_parse_libclosure_type(bv, "enum Block_byref_flags"), "flags")
                 byref_struct.append(bv.parse_type_string("uint32_t size")[0], "size")
 
                 byref_insn_var.type = byref_struct
