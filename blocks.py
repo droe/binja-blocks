@@ -56,33 +56,41 @@ typedef struct objc_object* id;
 
 _LIBCLOSURE_TYPE_SOURCE = """
 enum Block_flags : uint32_t {
-    BLOCK_DEALLOCATING              = 0x0001U,      // runtime
-    BLOCK_REFCOUNT_MASK             = 0xfffeU,      // runtime
-    BLOCK_INLINE_LAYOUT_STRING      = 1U << 21,     // compiler
-    BLOCK_SMALL_DESCRIPTOR          = 1U << 22,     // compiler
-    BLOCK_IS_NOESCAPE               = 1U << 23,     // compiler
-    BLOCK_NEEDS_FREE                = 1U << 24,     // runtime
-    BLOCK_HAS_COPY_DISPOSE          = 1U << 25,     // compiler
-    BLOCK_HAS_CTOR                  = 1U << 26,     // compiler
-    BLOCK_IS_GC                     = 1U << 27,     // runtime
-    BLOCK_IS_GLOBAL                 = 1U << 28,     // compiler
-    BLOCK_USE_STRET                 = 1U << 29,     // compiler
-    BLOCK_HAS_SIGNATURE             = 1U << 30,     // compiler
-    BLOCK_HAS_EXTENDED_LAYOUT       = 1U << 31,     // compiler
+    BLOCK_DEALLOCATING                  = 0x0001U,      // runtime
+    BLOCK_REFCOUNT_MASK                 = 0xfffeU,      // runtime
+
+    // in-descriptor flags only
+    BLOCK_GENERIC_HELPER_NONE           = 0U << 14,     // compiler
+    BLOCK_GENERIC_HELPER_FROM_LAYOUT    = 1U << 14,     // compiler
+    BLOCK_GENERIC_HELPER_INLINE         = 2U << 14,     // compiler
+    BLOCK_GENERIC_HELPER_OUTOFLINE      = 3U << 14,     // compiler
+    BLOCK_GENERIC_HELPER_MASK           = 3U << 14,     // compiler
+
+    BLOCK_INLINE_LAYOUT_STRING          = 1U << 21,     // compiler
+    BLOCK_SMALL_DESCRIPTOR              = 1U << 22,     // compiler
+    BLOCK_IS_NOESCAPE                   = 1U << 23,     // compiler
+    BLOCK_NEEDS_FREE                    = 1U << 24,     // runtime
+    BLOCK_HAS_COPY_DISPOSE              = 1U << 25,     // compiler
+    BLOCK_HAS_CTOR                      = 1U << 26,     // compiler
+    BLOCK_IS_GC                         = 1U << 27,     // runtime
+    BLOCK_IS_GLOBAL                     = 1U << 28,     // compiler
+    BLOCK_USE_STRET                     = 1U << 29,     // compiler
+    BLOCK_HAS_SIGNATURE                 = 1U << 30,     // compiler
+    BLOCK_HAS_EXTENDED_LAYOUT           = 1U << 31,     // compiler
 };
 
 enum Block_byref_flags : uint32_t {
-    BLOCK_BYREF_DEALLOCATING        = 0x0001U,      // runtime
-    BLOCK_BYREF_REFCOUNT_MASK       = 0xfffeU,      // runtime
-    BLOCK_BYREF_NEEDS_FREE          = 1U << 24,     // runtime
-    BLOCK_BYREF_HAS_COPY_DISPOSE    = 1U << 25,     // compiler
-    BLOCK_BYREF_IS_GC               = 1U << 27,     // runtime
-    BLOCK_BYREF_LAYOUT_MASK         = 7U << 28,     // compiler
-    BLOCK_BYREF_LAYOUT_EXTENDED     = 1U << 28,     // compiler
-    BLOCK_BYREF_LAYOUT_NON_OBJECT   = 2U << 28,     // compiler
-    BLOCK_BYREF_LAYOUT_STRONG       = 3U << 28,     // compiler
-    BLOCK_BYREF_LAYOUT_WEAK         = 4U << 28,     // compiler
-    BLOCK_BYREF_LAYOUT_UNRETAINED   = 5U << 28,     // compiler
+    BLOCK_BYREF_DEALLOCATING            = 0x0001U,      // runtime
+    BLOCK_BYREF_REFCOUNT_MASK           = 0xfffeU,      // runtime
+    BLOCK_BYREF_NEEDS_FREE              = 1U << 24,     // runtime
+    BLOCK_BYREF_HAS_COPY_DISPOSE        = 1U << 25,     // compiler
+    BLOCK_BYREF_IS_GC                   = 1U << 27,     // runtime
+    BLOCK_BYREF_LAYOUT_MASK             = 7U << 28,     // compiler
+    BLOCK_BYREF_LAYOUT_EXTENDED         = 1U << 28,     // compiler
+    BLOCK_BYREF_LAYOUT_NON_OBJECT       = 2U << 28,     // compiler
+    BLOCK_BYREF_LAYOUT_STRONG           = 3U << 28,     // compiler
+    BLOCK_BYREF_LAYOUT_WEAK             = 4U << 28,     // compiler
+    BLOCK_BYREF_LAYOUT_UNRETAINED       = 5U << 28,     // compiler
 };
 
 typedef void(*BlockCopyFunction)(void *, const void *);
@@ -133,27 +141,34 @@ struct Block_literal {
 };
 """
 
-BLOCK_HAS_EXTENDED_LAYOUT       = 0x80000000
-BLOCK_HAS_SIGNATURE             = 0x40000000
-BLOCK_IS_GLOBAL                 = 0x10000000
-BLOCK_HAS_COPY_DISPOSE          = 0x02000000
-BLOCK_SMALL_DESCRIPTOR          = 0x00400000
+BLOCK_HAS_EXTENDED_LAYOUT           = 0x80000000
+BLOCK_HAS_SIGNATURE                 = 0x40000000
+BLOCK_IS_GLOBAL                     = 0x10000000
+BLOCK_HAS_COPY_DISPOSE              = 0x02000000
+BLOCK_SMALL_DESCRIPTOR              = 0x00400000
 
-BLOCK_BYREF_HAS_COPY_DISPOSE    = 0x02000000
-BLOCK_BYREF_LAYOUT_MASK         = 0x70000000
-BLOCK_BYREF_LAYOUT_EXTENDED     = 0x10000000
-BLOCK_BYREF_LAYOUT_NON_OBJECT   = 0x20000000
-BLOCK_BYREF_LAYOUT_STRONG       = 0x30000000
-BLOCK_BYREF_LAYOUT_WEAK         = 0x40000000
-BLOCK_BYREF_LAYOUT_UNRETAINED   = 0x50000000
+BLOCK_GENERIC_HELPER_MASK           = 0x0000C000
+BLOCK_GENERIC_HELPER_NONE           = 0x00000000
+BLOCK_GENERIC_HELPER_FROM_LAYOUT    = 0x00004000
+BLOCK_GENERIC_HELPER_INLINE         = 0x00008000
+BLOCK_GENERIC_HELPER_OUTOFLINE      = 0x0000C000
 
-BLOCK_LAYOUT_ESCAPE             = 0x0   # lo nibble 0 halt, remainder is non-pointer (lo != 0 undef)
-BLOCK_LAYOUT_NON_OBJECT_BYTES   = 0x1   # lo nibble # bytes non-objects
-BLOCK_LAYOUT_NON_OBJECT_WORDS   = 0x2   # lo nibble # ptr-sized words non-objects
-BLOCK_LAYOUT_STRONG             = 0x3   # lo nibble # strong pointers
-BLOCK_LAYOUT_BYREF              = 0x4   # lo nibble # byref pointers
-BLOCK_LAYOUT_WEAK               = 0x5   # lo nibble # weak pointers
-BLOCK_LAYOUT_UNRETAINED         = 0x6   # lo nibble # unretained pointers
+BLOCK_BYREF_HAS_COPY_DISPOSE        = 0x02000000
+BLOCK_BYREF_LAYOUT_MASK             = 0x70000000
+BLOCK_BYREF_LAYOUT_EXTENDED         = 0x10000000
+BLOCK_BYREF_LAYOUT_NON_OBJECT       = 0x20000000
+BLOCK_BYREF_LAYOUT_STRONG           = 0x30000000
+BLOCK_BYREF_LAYOUT_WEAK             = 0x40000000
+BLOCK_BYREF_LAYOUT_UNRETAINED       = 0x50000000
+
+BLOCK_LAYOUT_ESCAPE                 = 0x0   # lo nibble 0 halt, remainder is non-pointer
+                                            # lo nibble != 0 is reserved
+BLOCK_LAYOUT_NON_OBJECT_BYTES       = 0x1   # lo nibble # bytes non-objects
+BLOCK_LAYOUT_NON_OBJECT_WORDS       = 0x2   # lo nibble # ptr-sized words non-objects
+BLOCK_LAYOUT_STRONG                 = 0x3   # lo nibble # strong pointers
+BLOCK_LAYOUT_BYREF                  = 0x4   # lo nibble # byref pointers
+BLOCK_LAYOUT_WEAK                   = 0x5   # lo nibble # weak pointers
+BLOCK_LAYOUT_UNRETAINED             = 0x6   # lo nibble # unretained pointers
 
 
 def _get_custom_type_internal(bv, name, typestr, source, dependency=None):
@@ -656,13 +671,13 @@ class BlockDescriptor:
         self.reserved = br.read64()
         # in-descriptor flags
         if self.reserved != 0:
-            # u32 flags
+            # u32 in_descriptor_flags
             # u32 reserved
-            self.flags = self.reserved & 0xFFFFFFFF
-            assert self.flags & 0xFFFF0000 == block_flags & 0xFFFF0000 & ~BLOCK_SMALL_DESCRIPTOR
+            self.in_descriptor_flags = self.reserved & 0xFFFFFFFF
+            assert self.in_descriptor_flags & 0xFFFF0000 == block_flags & 0xFFFF0000 & ~BLOCK_SMALL_DESCRIPTOR
         else:
             # u64 reserved
-            self.flags = None
+            self.in_descriptor_flags = None
 
         self.size = br.read64()
         assert self.size >= 0x20
@@ -680,9 +695,24 @@ class BlockDescriptor:
                 self.signature_raw = self._bv.get_ascii_string_at(self.signature, 0).raw
             else:
                 self.signature_raw = None
-            if self.block_has_extended_layout:
+            if self.block_has_extended_layout or \
+                    (self.generic_helper_type in (BLOCK_GENERIC_HELPER_NONE,
+                                                  BLOCK_GENERIC_HELPER_FROM_LAYOUT)):
+                # Cases handled by reading and marking up a layout field:
+                # a) Descriptor with extended layout.
+                # b) Descriptor with generic helper type on in-descriptor flags that implies
+                #    presence of layout field (generic helper none or from layout).
+                # c) Old descriptor format without extended layout, e.g. "old GC layout",
+                #    unsure of semantics, and unsure if relevant for 64-bit archs.
+                # d) ABI.2010.3.16 as per https://clang.llvm.org/docs/Block-ABI-Apple.html,
+                #    i.e. signature field w/o layout field following, extended layout bit unset;
+                #    unsure if this ever existed outside of spec documents.
+                #    We'd want to handle d) differently if we had a way to recognise it.
                 self.layout = br.read64()
             else:
+                # Cases handled by not reading and not marking up a layout field:
+                # e) Generic helper type that explicitly foregoes the layout field
+                #    (generic helper inline or out-of-line).
                 self.layout = None
 
     @property
@@ -709,9 +739,15 @@ class BlockDescriptor:
     def block_has_small_descriptor(self):
         return (self.block_flags & BLOCK_SMALL_DESCRIPTOR) != 0
 
+    @property
+    def generic_helper_type(self):
+        if self.in_descriptor_flags is None:
+            return BLOCK_GENERIC_HELPER_FROM_LAYOUT
+        return (self.in_descriptor_flags & BLOCK_GENERIC_HELPER_MASK)
+
     def __str__(self):
-        if self.flags:
-            flags_s = f" flags {self.flags:x}"
+        if self.in_descriptor_flags:
+            flags_s = f" in-descriptor flags {self.in_descriptor_flags:x}"
         else:
             flags_s = ""
         return f"Block descriptor at {self.address:x} size {self.size:#x}{flags_s}"
@@ -724,8 +760,8 @@ class BlockDescriptor:
         if self.reserved == 0:
             struct.append(self._bv.parse_type_string("uint64_t reserved")[0], "reserved")
         else:
-            assert self.flags is not None
-            struct.append(_parse_libclosure_type(self._bv, "enum Block_flags"), "flags")
+            assert self.in_descriptor_flags is not None
+            struct.append(_parse_libclosure_type(self._bv, "enum Block_flags"), "in_descriptor_flags")
             struct.append(self._bv.parse_type_string("uint32_t reserved")[0], "reserved")
         assert struct.width == 8
         struct.append(self._bv.parse_type_string("uint64_t size")[0], "size")
@@ -734,18 +770,13 @@ class BlockDescriptor:
             struct.append(_get_libclosure_type(self._bv, "BlockDisposeFunction"), "dispose")
         if self.block_has_signature:
             struct.append(self._bv.parse_type_string("char const *signature")[0], "signature")
-            if self.block_has_extended_layout:
+            if self.layout is not None:
                 if self.layout < 0x1000:
                     struct.append(self._bv.parse_type_string("uint64_t layout")[0], "layout")
                 else:
                     struct.append(self._bv.parse_type_string("uint8_t const *layout")[0], "layout")
             else:
-                # Different possibilities here, with low confidence:
-                # a) "old GC layout", unsure of semantics, and unsure if relevant for 64-bit archs
-                # b) ABI.2010.3.16 as per https://clang.llvm.org/docs/Block-ABI-Apple.html,
-                #    i.e. signature field w/o layout field following, extended layout bit unset
-                # Wrong annotations seem worse than missing a field in the annotation, so
-                # skip the layout field.  Being the last field in the struct, this is safe.
+                # Skip the layout field, see ctor for rationale.
                 pass
         self.struct_builder = struct
         self.struct_name = f"Block_descriptor_{self.address:x}"
