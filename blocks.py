@@ -57,14 +57,16 @@ typedef struct objc_object* id;
 _LIBCLOSURE_TYPE_SOURCE = """
 enum Block_flags : uint32_t {
     BLOCK_DEALLOCATING                  = 0x0001U,      // runtime
-    BLOCK_REFCOUNT_MASK                 = 0xfffeU,      // runtime
+//  BLOCK_REFCOUNT_MASK                 = 0xfffeU,      // runtime
 
     // in-descriptor flags only
-    BLOCK_GENERIC_HELPER_NONE           = 0U << 14,     // compiler
-    BLOCK_GENERIC_HELPER_FROM_LAYOUT    = 1U << 14,     // compiler
-    BLOCK_GENERIC_HELPER_INLINE         = 2U << 14,     // compiler
-    BLOCK_GENERIC_HELPER_OUTOFLINE      = 3U << 14,     // compiler
-    BLOCK_GENERIC_HELPER_MASK           = 3U << 14,     // compiler
+//  BLOCK_GENERIC_HELPER_NONE           = 0U << 14,     // compiler
+//  BLOCK_GENERIC_HELPER_FROM_LAYOUT    = 1U << 14,     // compiler
+//  BLOCK_GENERIC_HELPER_INLINE         = 2U << 14,     // compiler
+//  BLOCK_GENERIC_HELPER_OUTOFLINE      = 3U << 14,     // compiler
+//  BLOCK_GENERIC_HELPER_MASK           = 3U << 14,     // compiler
+    BLOCK_GENERIC_HELPER_BIT0           = 1U << 14,     // compiler
+    BLOCK_GENERIC_HELPER_BIT1           = 1U << 15,     // compiler
 
     BLOCK_INLINE_LAYOUT_STRING          = 1U << 21,     // compiler
     BLOCK_SMALL_DESCRIPTOR              = 1U << 22,     // compiler
@@ -81,16 +83,19 @@ enum Block_flags : uint32_t {
 
 enum Block_byref_flags : uint32_t {
     BLOCK_BYREF_DEALLOCATING            = 0x0001U,      // runtime
-    BLOCK_BYREF_REFCOUNT_MASK           = 0xfffeU,      // runtime
+//  BLOCK_BYREF_REFCOUNT_MASK           = 0xfffeU,      // runtime
     BLOCK_BYREF_NEEDS_FREE              = 1U << 24,     // runtime
     BLOCK_BYREF_HAS_COPY_DISPOSE        = 1U << 25,     // compiler
     BLOCK_BYREF_IS_GC                   = 1U << 27,     // runtime
-    BLOCK_BYREF_LAYOUT_MASK             = 7U << 28,     // compiler
-    BLOCK_BYREF_LAYOUT_EXTENDED         = 1U << 28,     // compiler
-    BLOCK_BYREF_LAYOUT_NON_OBJECT       = 2U << 28,     // compiler
-    BLOCK_BYREF_LAYOUT_STRONG           = 3U << 28,     // compiler
-    BLOCK_BYREF_LAYOUT_WEAK             = 4U << 28,     // compiler
-    BLOCK_BYREF_LAYOUT_UNRETAINED       = 5U << 28,     // compiler
+//  BLOCK_BYREF_LAYOUT_MASK             = 7U << 28,     // compiler
+//  BLOCK_BYREF_LAYOUT_EXTENDED         = 1U << 28,     // compiler
+//  BLOCK_BYREF_LAYOUT_NON_OBJECT       = 2U << 28,     // compiler
+//  BLOCK_BYREF_LAYOUT_STRONG           = 3U << 28,     // compiler
+//  BLOCK_BYREF_LAYOUT_WEAK             = 4U << 28,     // compiler
+//  BLOCK_BYREF_LAYOUT_UNRETAINED       = 5U << 28,     // compiler
+    BLOCK_BYREF_LAYOUT_BIT0             = 1U << 28,     // compiler
+    BLOCK_BYREF_LAYOUT_BIT1             = 1U << 29,     // compiler
+    BLOCK_BYREF_LAYOUT_BIT2             = 1U << 30,     // compiler
 };
 
 typedef void(*BlockCopyFunction)(void *, const void *);
