@@ -720,6 +720,12 @@ class BlockDescriptor:
                 #    (generic helper inline or out-of-line).
                 self.layout = None
 
+        if self.generic_helper_type in (BLOCK_GENERIC_HELPER_INLINE,
+                                        BLOCK_GENERIC_HELPER_OUTOFLINE):
+            br.seek(self.address - self._bv.arch.address_size)
+            assert self._bv.arch.address_size == 8
+            self.generic_helper_info = br.read64()
+
     @property
     def imported_variables_size(self):
         return self.size - 0x20
@@ -799,6 +805,18 @@ class BlockDescriptor:
         bl.struct_builder.replace(pointer_index, binja.Type.pointer(self._bv.arch, self.struct_type), "descriptor")
         self._bv.define_type(binja.Type.generate_auto_type_id(_TYPE_ID_SOURCE, bl.struct_name), bl.struct_name, bl.struct_builder)
         bl.struct_type = self._bv.parse_type_string(bl.struct_type_name)[0]
+
+        # annotate generic helper info
+        if self.generic_helper_type in (BLOCK_GENERIC_HELPER_INLINE,
+                                        BLOCK_GENERIC_HELPER_OUTOFLINE):
+            if self.generic_helper_type == BLOCK_GENERIC_HELPER_INLINE:
+                generic_helper_info_type = self._bv.parse_type_string("uint64_t")[0]
+            else:
+                generic_helper_info_type = self._bv.parse_type_string("void *")[0]
+            shinobi.make_data_var(self._bv,
+                                  self.address - self._bv.arch.address_size,
+                                  generic_helper_info_type,
+                                  f"block_descriptor_{self.address:x}_generic_helper_info")
 
 
 def annotate_global_block_literal(bv, block_literal_addr, sym_addrs=None):
