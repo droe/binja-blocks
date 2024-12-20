@@ -371,11 +371,10 @@ class BlockLiteral:
 
         for insn in shinobi.yield_struct_field_assign_hlil_instructions_for_var_id(bl_insn.function, stack_var_id):
             if insn.dest.member_index == 0:
-                if isinstance(insn.src, (binja.HighLevelILImport, binja.HighLevelILConstPtr)) and \
+                if isinstance(insn.src, (binja.HighLevelILImport,
+                                         binja.HighLevelILConstPtr)) and \
                         insn.src.constant in sym_addrs:
                     isa = insn.src.constant
-                else:
-                    raise BlockLiteral.NotABlockLiteralError("isa is not __NSConcreteStackBlock")
             elif insn.dest.member_index == 1:
                 if isinstance(insn.src, (binja.HighLevelILConst,
                                          binja.HighLevelILConstPtr)):
