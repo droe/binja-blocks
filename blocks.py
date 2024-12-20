@@ -271,7 +271,7 @@ def append_layout_fields(bv, struct, layout, block_has_extended_layout, byref_in
         return
 
     id_type = _parse_objc_type(bv, "id")
-    u64_type = bv.parse_type_string(f"uint64_t")[0]
+    u64_type = bv.parse_type_string("uint64_t")[0]
 
     if layout < 0x1000:
         # compact encoding
