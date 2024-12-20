@@ -701,23 +701,26 @@ class BlockDescriptor:
             else:
                 self.signature_raw = None
             if self.block_has_extended_layout or \
-                    (self.generic_helper_type in (BLOCK_GENERIC_HELPER_NONE,
-                                                  BLOCK_GENERIC_HELPER_FROM_LAYOUT)):
+                    (self.generic_helper_type != BLOCK_GENERIC_HELPER_NONE) or \
+                    (not self.block_has_copy_dispose) or \
+                    self.block_is_global:
                 # Cases handled by reading and marking up a layout field:
                 # a) Descriptor with extended layout.
                 # b) Descriptor with generic helper type on in-descriptor flags that implies
-                #    presence of layout field (generic helper none or from layout).
-                # c) Old descriptor format without extended layout, e.g. "old GC layout",
+                #    presence of layout field (generic helper from layout, inline, out-of-line).
+                # c) Descriptor without custom copy/dispose handlers.
+                # d) Old descriptor format without extended layout, e.g. "old GC layout",
                 #    unsure of semantics, and unsure if relevant for 64-bit archs.
-                # d) ABI.2010.3.16 as per https://clang.llvm.org/docs/Block-ABI-Apple.html,
+                # e) ABI.2010.3.16 as per https://clang.llvm.org/docs/Block-ABI-Apple.html,
                 #    i.e. signature field w/o layout field following, extended layout bit unset;
                 #    unsure if this ever existed outside of spec documents.
-                #    We'd want to handle d) differently if we had a way to recognise it.
+                #    We'd want to handle this case differently if we had a way to recognise it.
                 self.layout = br.read64()
             else:
                 # Cases handled by not reading and not marking up a layout field:
-                # e) Generic helper type that explicitly foregoes the layout field
-                #    (generic helper inline or out-of-line).
+                # f) Stack blocks without extended layout, without generic helper info,
+                #    with custom copy/dispose handlers.  These seem to sometimes get
+                #    emitted without a layout field.
                 self.layout = None
 
         if self.generic_helper_type in (BLOCK_GENERIC_HELPER_INLINE,
@@ -753,7 +756,7 @@ class BlockDescriptor:
     @property
     def generic_helper_type(self):
         if self.in_descriptor_flags is None:
-            return BLOCK_GENERIC_HELPER_FROM_LAYOUT
+            return BLOCK_GENERIC_HELPER_NONE
         return (self.in_descriptor_flags & BLOCK_GENERIC_HELPER_MASK)
 
     def __str__(self):
