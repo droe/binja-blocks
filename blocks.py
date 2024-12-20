@@ -819,6 +819,19 @@ def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
             print("__NSConcreteStackBlock not found, target does not appear to contain any stack blocks")
             return
 
+    sects = bv.get_sections_at(block_literal_insn.address)
+    if sects is None or len(sects) == 0:
+        print(f"{where}: Address is not in a segment", file=sys.stderr)
+        return
+    if any([sect.name in ('__auth_got',
+                          '__got') for sect in sects]):
+        print(f"{where}: Address is in an exempted section that does not contain stack blocks")
+        return
+
+    if len(bv.get_functions_containing(block_literal_insn.address)) == 0:
+        print(f"{where}: Address is not in any functions")
+        return
+
     if isinstance(block_literal_insn, binja.HighLevelILVarInit):
         # The most common case where Binja knows nothing about the stack
         # variable.  The initialization with __NSConcreteStackBlock is a
@@ -830,6 +843,8 @@ def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
         # (e.g. __Block_copy) causes Binja to create a stack var at the stack
         # address of the block literal.  The initialization with
         # __NSConcreteStackBlock is a HighLevelILAssign.
+        # HighLevelILAssign will also occur if stack space is used for
+        # different purposes in different branches of a function.
         if isinstance(block_literal_insn.dest, binja.HighLevelILStructField):
             block_literal_var = block_literal_insn.dest.src.var
         elif isinstance(block_literal_insn.dest, binja.HighLevelILVar):
@@ -1131,7 +1146,8 @@ def annotate_all_stack_blocks(bv, set_progress=None):
     #    print(refsrc.llil, refsrc.mlil, refsrc.hlil, refsrc.llil.hlil, refsrc.llil.hlils)
 
     for insn in bv.hlil_instructions:
-        if not isinstance(insn, binja.HighLevelILVarInit):
+        if not isinstance(insn, (binja.HighLevelILVarInit,
+                                 binja.HighLevelILAssign)):
             continue
         if not isinstance(insn.src, (binja.HighLevelILImport,
                                      binja.HighLevelILConstPtr)):
