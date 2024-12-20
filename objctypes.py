@@ -181,6 +181,10 @@ class ObjCEncodedTypes:
     >>> o = ObjCEncodedTypes(b'v28@?0^{_launch_domain_io_s={_launch_obj_header_s=^vB}{?=*{_xpc_token_s=IIIIIiii}Q^{dispatch_queue_s}@?@?^{_launch_array_s}ICb1}}8^{_launch_io_s={_launch_obj_header_s=^vB}{?={_xpc_token_s=IIIIIiii}Q}{?=C*^{dispatch_data_s}^{_xpc_bundle_s}^v{stat=iSSQIIi{timespec=qq}{timespec=qq}{timespec=qq}{timespec=qq}qqiIIi[2q]}i^{dispatch_queue_s}@?b1b1b1}}16i24')
     >>> o.ctypes
     ['void', 'void *', 'struct _launch_domain_io_s *', 'struct _launch_io_s *', 'int']
+
+    >>> o = ObjCEncodedTypes(b'^{os_state_data_s=I(?=b32I){os_state_data_decoder_s=[64c][64c]}[64c][0C]}16@?0^{os_state_hints_s=I*II}8')
+    >>> o.ctypes
+    ['struct os_state_data_s *', 'void *', 'struct os_state_hints_s *']
     """
 
     BASIC_TYPE_MAP = {
@@ -238,10 +242,26 @@ class ObjCEncodedTypes:
             ctypes.append(t)
         return ctypes
 
-    def _skip_bitfield(self):
+    def _parse_bitfield(self):
+        nbits = 0
         while self._peek() == b"b":
             self._consume(1)
-            _ = self._parse_number()
+            nbits += self._parse_number()
+        assert nbits >= 0
+        # The type and width of the underlying type is not encoded.
+        # Guess based on the number of bits and hope for the best.
+        if nbits <= 8:
+            return "uint8_t"
+        elif nbits <= 16:
+            return "uint16_t"
+        elif nbits <= 32:
+            return "uint32_t"
+        elif nbits <= 64:
+            return "uint64_t"
+        elif nbits <= 128:
+            return "uint128_t"
+        else:
+            raise ValueError(f"Bitfield of {nbits} bits exceeds uint128_t width")
 
     def _parse_type(self):
         #print(f"_parse_type idx {self._idx} {self._raw[self._idx:]}", file=sys.stderr)
@@ -269,33 +289,31 @@ class ObjCEncodedTypes:
                     _ = self._parse_signature()
                     assert self._peek() == b">"
                     self._consume(1)
-                self._skip_bitfield()
                 return qual + "void *"
             elif cc == b"@\"":
                 self._consume(2)
                 classname = self._parse_classname()
                 assert self._peek() == b"\""
                 self._consume(1)
-                self._skip_bitfield()
                 if classname[:1] == b"<":
                     return qual + f"NSObject{classname} !"
                 else:
                     return qual + f"{classname} !"
             else:
                 self._consume(1)
-                self._skip_bitfield()
                 return qual + "id"
+
+        if c == b"b":
+            return qual + self._parse_bitfield()
 
         ctype = self.BASIC_TYPE_MAP.get(c, None)
         if ctype is not None:
             self._consume(1)
-            self._skip_bitfield()
             return qual + ctype
 
         if c == b"^":
             self._consume(1)
             target_ctype = self._parse_type()
-            self._skip_bitfield()
             if target_ctype[-1:] == "*":
                 return qual + target_ctype + "*"
             else:
@@ -322,7 +340,6 @@ class ObjCEncodedTypes:
                 pass
             assert self._peek() == sentinel
             self._consume(1)
-            self._skip_bitfield()
             # We could try to construct an anonymous struct or
             # union here, but let's not bother for now.
             if any([structname.startswith(prefix) for prefix in ["shared_ptr<", "unique_ptr<", "weak_ptr<"]]):
@@ -339,10 +356,9 @@ class ObjCEncodedTypes:
             t = self._parse_type()
             assert self._peek() == b"]"
             self._consume(1)
-            self._skip_bitfield()
             return qual + f"{t}[{n}]"
 
-        raise NotImplementedError(f"unsupported type '{c}'")
+        raise NotImplementedError(f"unsupported type '{c.decode(errors='ignore')}'")
 
     _DIGITS = set([b"0", b"1", b"2", b"3", b"4", b"5", b"6", b"7", b"8", b"9"])
 
@@ -352,7 +368,9 @@ class ObjCEncodedTypes:
         while (c := self._peek()) is not None and c in self._DIGITS:
             self._consume(1)
             end += 1
-        return self._raw[start:end].decode()
+        if start == end:
+            return 0
+        return int(self._raw[start:end].decode())
 
     def _parse_terminated_string(self, sentinels):
         start = self._idx
