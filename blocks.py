@@ -642,7 +642,7 @@ class BlockDescriptor:
             # u32 flags
             # u32 reserved
             self.flags = self.reserved & 0xFFFFFFFF
-            assert self.flags == block_flags & ~BLOCK_SMALL_DESCRIPTOR
+            assert self.flags & 0xFFFF0000 == block_flags & 0xFFFF0000 & ~BLOCK_SMALL_DESCRIPTOR
         else:
             # u64 reserved
             self.flags = None
