@@ -53,6 +53,8 @@ Features:
 
 Known limitations:
 
+-   Automatic discovery of blocks and byrefs on the stack is unreliable by
+    nature and depends on Binary Ninja's ability to lift into clean HLIL
 -   No support for "small descriptors"
 -   No support for 32-bit architectures
 -   No support for "old GC layout"
