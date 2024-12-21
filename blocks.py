@@ -924,10 +924,10 @@ def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
                     byref_srcs.append((insn_src, insn.dest.member_index))
 
             # check number of byref_srcs
-            if len(byref_srcs) != len(byref_indexes_set):
-                byref_srcs_set = set([t[1] for t in byref_srcs])
-                missing_indexes_set = byref_srcs_set - byref_indexes_set
-                missing_indexes_str = ', '.join([str(idx) for idx in sorted(missing_indexes)])
+            byref_srcs_set = set([t[1] for t in byref_srcs])
+            if len(byref_srcs_set) != len(byref_indexes_set):
+                missing_indexes_set = byref_indexes_set - byref_srcs_set
+                missing_indexes_str = ', '.join([str(idx) for idx in sorted(missing_indexes_set)])
                 bv.blocks_plugin_logger.log_warn(f"{where}: Failed to find byref for struct member indexes {missing_indexes_str}, review manually")
 
             # process byref_srcs
@@ -965,7 +965,8 @@ def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
                 # So apparently this works; despite the reloads, byref_srcs are not invalidated, identifiers are still current.
                 # Should that cease to be the case, we'll need to find next byref_src in a way that is robust to reloads.
 
-                byref_insn_var.name = f"block_byref_{byref_insn_var.name}"
+                if not byref_insn_var.name.startswith("block_byref_"):
+                    byref_insn_var.name = f"block_byref_{byref_insn_var.name}"
 
                 byref_struct = binja.StructureBuilder.create()
                 byref_struct.append(_parse_objc_type(bv, "Class"), "isa")
