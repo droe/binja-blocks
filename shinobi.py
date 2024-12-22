@@ -254,7 +254,7 @@ def _get_raw_string_at(self, addr, min_len=0):
         octets.append(br.read8())
     while len(octets) == 0 or octets[-1] != 0:
         octets.append(br.read8())
-    if any([c is None for c in octects]):
+    if any([c is None for c in octets]):
         return None
     return bytes(octets)
 binja.BinaryView.get_raw_string_at = _get_raw_string_at
