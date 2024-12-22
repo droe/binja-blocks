@@ -166,14 +166,13 @@ BLOCK_BYREF_LAYOUT_STRONG           = 0x30000000
 BLOCK_BYREF_LAYOUT_WEAK             = 0x40000000
 BLOCK_BYREF_LAYOUT_UNRETAINED       = 0x50000000
 
-BLOCK_LAYOUT_ESCAPE                 = 0x0   # lo nibble 0 halt, remainder is non-pointer
-                                            # lo nibble != 0 is reserved
-BLOCK_LAYOUT_NON_OBJECT_BYTES       = 0x1   # lo nibble # bytes non-objects
-BLOCK_LAYOUT_NON_OBJECT_WORDS       = 0x2   # lo nibble # ptr-sized words non-objects
-BLOCK_LAYOUT_STRONG                 = 0x3   # lo nibble # strong pointers
-BLOCK_LAYOUT_BYREF                  = 0x4   # lo nibble # byref pointers
-BLOCK_LAYOUT_WEAK                   = 0x5   # lo nibble # weak pointers
-BLOCK_LAYOUT_UNRETAINED             = 0x6   # lo nibble # unretained pointers
+BLOCK_LAYOUT_ESCAPE                 = 0x0
+BLOCK_LAYOUT_NON_OBJECT_BYTES       = 0x1
+BLOCK_LAYOUT_NON_OBJECT_WORDS       = 0x2
+BLOCK_LAYOUT_STRONG                 = 0x3
+BLOCK_LAYOUT_BYREF                  = 0x4
+BLOCK_LAYOUT_WEAK                   = 0x5
+BLOCK_LAYOUT_UNRETAINED             = 0x6
 
 BCK_DONE                            = 0x0
 BCK_NON_OBJECT_BYTES                = 0x1
@@ -258,12 +257,10 @@ def _define_ns_concrete_block_imports(bv):
     objc_class_type = _parse_objc_type(bv, "Class")
     for sym_name in ("__NSConcreteGlobalBlock", "__NSConcreteStackBlock"):
         for sym_type in (binja.SymbolType.ExternalSymbol, binja.SymbolType.DataSymbol):
-            sym = shinobi.get_symbol_of_type(bv, sym_name, sym_type)
+            sym = bv.get_symbol_of_type(sym_name, sym_type)
             if sym is None or sym.address == 0:
                 continue
-            shinobi.make_data_var(bv,
-                                  sym.address,
-                                  objc_class_type)
+            bv.make_data_var(sym.address, objc_class_type)
             break
 
 
@@ -440,7 +437,7 @@ class BlockLiteral:
         is_stack_block = True
         bl_var.type = _parse_libclosure_type(bv, "struct Block_literal")
 
-        bl_insn = shinobi.reload_hlil_instruction(bv, bl_insn,
+        bl_insn = bv.reload_hlil_instruction(bl_insn,
                 lambda insn: \
                         isinstance(insn, binja.HighLevelILAssign) and \
                         isinstance(insn.dest, binja.HighLevelILStructField) and \
@@ -561,7 +558,7 @@ class BlockLiteral:
             if not stack_var.name.startswith("stack_block_"):
                 stack_var.name = f"stack_block_{stack_var.name}"
             stack_var.type = self.struct_type_name
-            self.insn = shinobi.reload_hlil_instruction(self._bv, self.insn,
+            self.insn = self._bv.reload_hlil_instruction(self.insn,
                     lambda insn: \
                             isinstance(insn, binja.HighLevelILAssign) and \
                             isinstance(insn.dest, binja.HighLevelILStructField) and \
@@ -657,7 +654,7 @@ class BlockLiteral:
             if invoke_func.name == f"sub_{invoke_func.start:x}":
                 invoke_func.name = f"sub_{invoke_func.start:x}_block_invoke"
 
-        # XXX move remainder to BlockDescriptor
+        # XXX move remainder to BlockDescriptor when switching to one block literal struct type per descriptor
 
         if bd.block_has_copy_dispose:
             # Interleave annotation of the two functions in order to minimize
@@ -726,7 +723,8 @@ class BlockDescriptor:
         self.size = br.read64()
         if self.size is None:
             raise BlockDescriptor.NotABlockDescriptorError(f"Block descriptor at {self.address:x}: size field does not exist")
-        assert self.size >= 0x20
+        if self.size < 0x20:
+            raise BlockDescriptor.NotABlockDescriptorError(f"Block descriptor at {self.address:x}: size too small ({self.size} < 0x20)")
 
         if self.block_has_copy_dispose:
             self.copy = br.read64()
@@ -871,10 +869,9 @@ class BlockDescriptor:
         self.struct_type_name = f"struct {self.struct_name}"
         self.struct_type = self._bv.parse_type_string(self.struct_type_name)[0]
         assert self.struct_type is not None
-        shinobi.make_data_var(self._bv,
-                              self.address,
-                              self.struct_type,
-                              f"block_descriptor_{self.address:x}")
+        self._bv.make_data_var(self.address,
+                               self.struct_type,
+                               f"block_descriptor_{self.address:x}")
 
         # propagate struct type to descriptor pointer on block literal
         pointer_index = bl.struct_builder.index_by_name("descriptor")
@@ -889,10 +886,9 @@ class BlockDescriptor:
                 generic_helper_info_type = self._bv.parse_type_string("uint64_t")[0]
             else:
                 generic_helper_info_type = self._bv.parse_type_string("uint8_t const *")[0]
-            shinobi.make_data_var(self._bv,
-                                  self.address - self._bv.arch.address_size,
-                                  generic_helper_info_type,
-                                  f"block_descriptor_{self.address:x}_generic_helper_info")
+            self._bv.make_data_var(self.address - self._bv.arch.address_size,
+                                   generic_helper_info_type,
+                                   f"block_descriptor_{self.address:x}_generic_helper_info")
 
     def annotate_layout_bytecode(self):
         """
@@ -900,10 +896,9 @@ class BlockDescriptor:
         """
         if self.block_has_signature and self.block_has_extended_layout and self.layout >= 0x1000:
             n = len(self.layout_bytecode)
-            shinobi.make_data_var(self._bv,
-                                  self.layout,
-                                  self._bv.parse_type_string(f"uint8_t [{n}]")[0],
-                                  f"block_layout_{self.layout:x}")
+            self._bv.make_data_var(self.layout,
+                                   self._bv.parse_type_string(f"uint8_t [{n}]")[0],
+                                   f"block_layout_{self.layout:x}")
 
     def annotate_generic_helper_info_bytecode(self):
         """
@@ -911,10 +906,9 @@ class BlockDescriptor:
         """
         if self.generic_helper_type == BLOCK_GENERIC_HELPER_OUTOFLINE:
             n = len(self.generic_helper_info_bytecode)
-            shinobi.make_data_var(self._bv,
-                                  self.generic_helper_info,
-                                  self._bv.parse_type_string(f"uint8_t [{n}]")[0],
-                                  f"block_generic_helper_info_{self.generic_helper_info:x}")
+            self._bv.make_data_var(self.generic_helper_info,
+                                   self._bv.parse_type_string(f"uint8_t [{n}]")[0],
+                                   f"block_generic_helper_info_{self.generic_helper_info:x}")
 
 
 def annotate_global_block_literal(bv, block_literal_addr, sym_addrs=None):
@@ -923,7 +917,7 @@ def annotate_global_block_literal(bv, block_literal_addr, sym_addrs=None):
     bv.blocks_plugin_logger.log_info(f"Annotating {where}")
 
     if sym_addrs is None:
-        sym_addrs = shinobi.get_symbol_addresses(bv, "__NSConcreteGlobalBlock")
+        sym_addrs = bv.get_symbol_addresses_set("__NSConcreteGlobalBlock")
         if len(sym_addrs) == 0:
             bv.blocks_plugin_logger.log_info("__NSConcreteGlobalBlock not found, target does not appear to contain any global blocks")
             return
@@ -987,7 +981,7 @@ def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
     bv.blocks_plugin_logger.log_info(f"Annotating {where}")
 
     if sym_addrs is None:
-        sym_addrs = shinobi.get_symbol_addresses(bv, "__NSConcreteStackBlock")
+        sym_addrs = bv.get_symbol_addresses_set("__NSConcreteStackBlock")
         if len(sym_addrs) == 0:
             bv.blocks_plugin_logger.log_info("__NSConcreteStackBlock not found, target does not appear to contain any stack blocks")
             return
@@ -1135,7 +1129,7 @@ def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
                 byref_struct.append(bv.parse_type_string("uint32_t size")[0], "size")
 
                 byref_insn_var.type = byref_struct
-                byref_insn = shinobi.reload_hlil_instruction(bv, byref_insn,
+                byref_insn = bv.reload_hlil_instruction(byref_insn,
                         lambda insn: \
                                 isinstance(insn, binja.HighLevelILVarDeclare) and \
                                 str(insn.var.type).startswith('struct'))
@@ -1175,7 +1169,7 @@ def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
                     byref_struct.append(bv.parse_type_string("void *layout")[0], "layout")
                     layout_index = byref_struct.index_by_name("layout")
                     byref_insn_var.type = byref_struct
-                    byref_insn = shinobi.reload_hlil_instruction(bv, byref_insn,
+                    byref_insn = bv.reload_hlil_instruction(byref_insn,
                             lambda insn: \
                                     isinstance(insn, binja.HighLevelILVarDeclare) and \
                                     str(insn.var.type).startswith('struct'))
@@ -1224,7 +1218,7 @@ def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
                 byref_struct_type = bv.parse_type_string(byref_struct_type_name)[0]
 
                 byref_insn_var.type = byref_struct_type
-                byref_insn = shinobi.reload_hlil_instruction(bv, byref_insn,
+                byref_insn = bv.reload_hlil_instruction(byref_insn,
                         lambda insn: \
                                 isinstance(insn, binja.HighLevelILVarDeclare) and \
                                 str(insn.var.type).startswith('struct'))
@@ -1303,7 +1297,7 @@ def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
 
 
 def annotate_all_global_blocks(bv, set_progress=None):
-    sym_addrs = shinobi.get_symbol_addresses(bv, "__NSConcreteGlobalBlock")
+    sym_addrs = bv.get_symbol_addresses_set("__NSConcreteGlobalBlock")
     if len(sym_addrs) == 0:
         bv.blocks_plugin_logger.log_info("__NSConcreteGlobalBlock not found, target does not appear to contain any global blocks")
         return
@@ -1316,7 +1310,7 @@ def annotate_all_global_blocks(bv, set_progress=None):
 
 
 def annotate_all_stack_blocks(bv, set_progress=None):
-    sym_addrs = shinobi.get_symbol_addresses(bv, "__NSConcreteStackBlock")
+    sym_addrs = bv.get_symbol_addresses_set("__NSConcreteStackBlock")
     if len(sym_addrs) == 0:
         bv.blocks_plugin_logger.log_info("__NSConcreteStackBlock not found, target does not appear to contain any stack blocks")
         return

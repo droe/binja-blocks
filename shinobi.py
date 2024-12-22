@@ -22,6 +22,11 @@
 import binaryninja as binja
 
 
+#
+# Plugin command decorators
+#
+
+
 def register(label, *args, **kvargs):
     """
     Decorator to register the decorated function as a general plugin command.
@@ -134,52 +139,80 @@ def undoable(func):
     return closure
 
 
-def yield_symbols_of_type(bv, name, type_):
+#
+# StructureBuilder extensions
+#
+
+
+def _append_with_offset_suffix(self, type_, name):
+    """
+    Append a field with type and name to the StructureBuilder,
+    and append the offset of the field to the name.
+    Monkey-patching this in to avoid a lot of duplicate code.
+    """
+    self.append(type_, name)
+    self.replace(len(self.members) - 1,
+                 self.members[-1].type,
+                 f"{self.members[-1].name}{self.members[-1].offset:x}")
+    return self
+binja.StructureBuilder.append_with_offset_suffix = _append_with_offset_suffix
+
+
+#
+# BinaryView extensions
+#
+
+
+def _yield_symbols_of_type(self, name, type_):
     """
     Find all symbols of a specific type and return a generator for them.
     """
-    for sym in filter(lambda x: x.type == type_, bv.symbols.get(name, [])):
+    for sym in filter(lambda x: x.type == type_, self.symbols.get(name, [])):
         yield sym
+binja.BinaryView.yield_symbols_of_type = _yield_symbols_of_type
 
 
-def get_symbol_of_type(bv, name, type_):
+def _get_symbol_of_type(self, name, type_):
     """
     Find a symbol of a specific type and return the first one found.
     """
     try:
-        return next(yield_symbols_of_type(bv, name, type_))
+        return next(self.yield_symbols_of_type(name, type_))
     except StopIteration:
         return None
+binja.BinaryView.get_symbol_of_type = _get_symbol_of_type
 
 
-def get_symbol_addresses(bv, name):
+def _get_symbol_addresses_set(self, name):
     """
     Find all symbols of a name and return a set of all their addresses.
     """
-    syms = bv.symbols.get(name, [])
+    syms = self.symbols.get(name, [])
     syms = filter(lambda sym: sym.address is not None and sym.address != 0, syms)
     return set([sym.address for sym in syms])
+binja.BinaryView.get_symbol_addresses_set = _get_symbol_addresses_set
 
 
-def make_data_var(bv, address, type_, name=None):
+def _make_data_var(self, address, type_, name=None):
     """
     Make a data var of given type and name at address.
     If a data var already exists, its name and type are set.
     If a data var does not exist, it is created.
     """
-    data_var = bv.get_data_var_at(address)
+    data_var = self.get_data_var_at(address)
     if data_var is None:
         if name is not None:
-            bv.define_data_var(address, type_, name)
+            self.define_data_var(address, type_, name)
         else:
-            bv.define_data_var(address, type_)
+            self.define_data_var(address, type_)
     else:
         if name is not None:
             data_var.name = name
         data_var.type = type_
+binja.BinaryView.make_data_var = _make_data_var
 
 
-def reload_hlil_instruction(bv, hlil_insn, predicate=None):
+def _reload_hlil_instruction(self, hlil_insn, predicate=None):
     """
     Refresh the instruction and the function it is associated with.
     This is useful after setting the type of an operand in situations
@@ -189,7 +222,7 @@ def reload_hlil_instruction(bv, hlil_insn, predicate=None):
     same address.  If a predicate is given, return the first
     instruction at the same address that matches the predicate.
     """
-    reloaded_func = bv.get_function_at(hlil_insn.function.source_function.start)
+    reloaded_func = self.get_function_at(hlil_insn.function.source_function.start)
     for insn in reloaded_func.hlil.instructions:
         if insn.address == hlil_insn.address:
             if predicate is not None and not predicate(insn):
@@ -200,6 +233,36 @@ def reload_hlil_instruction(bv, hlil_insn, predicate=None):
         reloaded_insn = None
     assert reloaded_insn is not None
     return reloaded_insn
+binja.BinaryView.reload_hlil_instruction = _reload_hlil_instruction
+
+
+def _get_raw_string_at(self, addr, min_len=0):
+    """
+    Read a NUL-terminated string from address.
+    Returns bytes including the terminating NUL.
+    The first min_len bytes can contain
+    non-terminating NUL characters.
+    Does not attempt to decode the string and will
+    happily read invalid UTF-8.
+    Does not create a StringReference.
+    Does not annotate anything.
+    """
+    br = binja.BinaryReader(self)
+    br.seek(addr)
+    octets = []
+    while len(octets) < min_len:
+        octets.append(br.read8())
+    while len(octets) == 0 or octets[-1] != 0:
+        octets.append(br.read8())
+    if any([c is None for c in octects]):
+        return None
+    return bytes(octets)
+binja.BinaryView.get_raw_string_at = _get_raw_string_at
+
+
+#
+# Other helpers
+#
 
 
 def yield_struct_field_assign_hlil_instructions_for_var_id(hlil_func, var_id):
@@ -235,41 +298,3 @@ def yield_struct_field_assign_hlil_instructions_for_var_id(hlil_func, var_id):
             continue
 
         yield insn
-
-
-def _append_with_offset_suffix(self, type_, name):
-    """
-    Append a field with type and name to the StructureBuilder,
-    and append the offset of the field to the name.
-    Monkey-patching this in to avoid a lot of duplicate code.
-    """
-    self.append(type_, name)
-    self.replace(len(self.members) - 1,
-                 self.members[-1].type,
-                 f"{self.members[-1].name}{self.members[-1].offset:x}")
-    return self
-binja.StructureBuilder.append_with_offset_suffix = _append_with_offset_suffix
-
-
-def _get_raw_string_at(self, addr, min_len=0):
-    """
-    Read a NUL-terminated string from address.
-    Returns bytes including the terminating NUL.
-    The first min_len bytes can contain
-    non-terminating NUL characters.
-    Does not attempt to decode the string and will
-    happily read invalid UTF-8.
-    Does not create a StringReference.
-    Does not annotate anything.
-    """
-    br = binja.BinaryReader(self)
-    br.seek(addr)
-    octets = []
-    while len(octets) < min_len:
-        octets.append(br.read8())
-    while len(octets) == 0 or octets[-1] != 0:
-        octets.append(br.read8())
-    if any([c is None for c in octects]):
-        return None
-    return bytes(octets)
-binja.BinaryView.get_raw_string_at = _get_raw_string_at
