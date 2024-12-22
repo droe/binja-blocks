@@ -693,6 +693,9 @@ class BlockLiteral:
 
 
 class BlockDescriptor:
+    class NotABlockDescriptorError(Exception):
+        pass
+
     def __init__(self, bv, descriptor_address, block_flags):
         """
         Read block descriptor from data.
@@ -708,6 +711,8 @@ class BlockDescriptor:
         br.seek(self.address)
 
         self.reserved = br.read64()
+        if self.reserved is None:
+            raise BlockDescriptor.NotABlockDescriptorError(f"Block descriptor at {self.address:x}: reserved field does not exist")
         # in-descriptor flags
         if self.reserved != 0:
             # u32 in_descriptor_flags
@@ -719,17 +724,25 @@ class BlockDescriptor:
             self.in_descriptor_flags = None
 
         self.size = br.read64()
+        if self.size is None:
+            raise BlockDescriptor.NotABlockDescriptorError(f"Block descriptor at {self.address:x}: size field does not exist")
         assert self.size >= 0x20
 
         if self.block_has_copy_dispose:
             self.copy = br.read64()
+            if self.copy is None:
+                raise BlockDescriptor.NotABlockDescriptorError(f"Block descriptor at {self.address:x}: copy field does not exist")
             self.dispose = br.read64()
+            if self.dispose is None:
+                raise BlockDescriptor.NotABlockDescriptorError(f"Block descriptor at {self.address:x}: dispose field does not exist")
         else:
             self.copy = None
             self.dispose = None
 
         if self.block_has_signature:
             self.signature = br.read64()
+            if self.signature is None:
+                raise BlockDescriptor.NotABlockDescriptorError(f"Block descriptor at {self.address:x}: signature field does not exist")
             if self.signature != 0:
                 self.signature_raw = self._bv.get_ascii_string_at(self.signature, 0).raw
             else:
@@ -750,9 +763,13 @@ class BlockDescriptor:
                 #    unsure if this ever existed outside of spec documents.
                 #    We'd want to handle this case differently if we had a way to recognise it.
                 self.layout = br.read64()
+                if self.layout is None:
+                    raise BlockDescriptor.NotABlockDescriptorError(f"Block descriptor at {self.address:x}: layout field does not exist")
                 if self.layout >= 0x1000:
                     # out-of-line layout string
                     self.layout_bytecode = self._bv.get_raw_string_at(self.layout)
+                    if self.layout_bytecode is None:
+                        raise BlockDescriptor.NotABlockDescriptorError(f"Block descriptor at {self.address:x}: out-of-line layout string does not exist")
                 else:
                     # inline layout encoding
                     self.layout_bytecode = None
@@ -769,10 +786,14 @@ class BlockDescriptor:
             br.seek(self.address - self._bv.arch.address_size)
             assert self._bv.arch.address_size == 8
             self.generic_helper_info = br.read64()
+            if self.generic_helper_info is None:
+                raise BlockDescriptor.NotABlockDescriptorError(f"Block descriptor at {self.address:x}: generic_helper_info field does not exist")
             if self.generic_helper_type == BLOCK_GENERIC_HELPER_OUTOFLINE:
                 assert self.generic_helper_info != 0
                 # min_len=1 to include the reserved byte in bytecode even if it's 0.
                 self.generic_helper_info_bytecode = self._bv.get_raw_string_at(self.generic_helper_info, min_len=1)
+                if self.generic_helper_info_bytecode is None:
+                    raise BlockDescriptor.NotABlockDescriptorError(f"Block descriptor at {self.address:x}: out-of-line generic helper info string does not exist")
             else:
                 self.generic_helper_info_bytecode = None
         else:
@@ -952,6 +973,9 @@ def annotate_global_block_literal(bv, block_literal_addr, sym_addrs=None):
     except BlockLiteral.FailedToFindFieldsError as e:
         bv.blocks_plugin_logger.log_warn(f"{where}: Failed to find fields: {e}")
         return
+    except BlockDescriptor.NotABlockDescriptorError as e:
+        bv.blocks_plugin_logger.log_warn(f"{where}: Not a block descriptor: {e}")
+        return
     except Exception as e:
         bv.blocks_plugin_logger.log_error(f"{where}: {type(e).__name__}: {e}\n{traceback.format_exc()}")
         return
@@ -1032,6 +1056,9 @@ def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
         return
     except BlockLiteral.FailedToFindFieldsError as e:
         bv.blocks_plugin_logger.log_warn(f"{where}: Failed to find fields: {e}")
+        return
+    except BlockDescriptor.NotABlockDescriptorError as e:
+        bv.blocks_plugin_logger.log_warn(f"{where}: Not a block descriptor: {e}")
         return
     except Exception as e:
         bv.blocks_plugin_logger.log_error(f"{where}: {type(e).__name__}: {e}\n{traceback.format_exc()}")
