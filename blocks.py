@@ -419,20 +419,32 @@ class BlockLiteral:
         br.seek(bl_data_var.address)
 
         isa = br.read64()
+        if isa is None:
+            raise BlockLiteral.NotABlockLiteralError("isa does not exist")
         if isa not in sym_addrs:
             raise BlockLiteral.NotABlockLiteralError("isa is not __NSConcreteGlobalBlock")
 
         flags = br.read32()
+        if flags is None:
+            raise BlockLiteral.NotABlockLiteralError("flags does not exist")
         if (flags & BLOCK_IS_GLOBAL) == 0:
             raise BlockLiteral.NotABlockLiteralError(f"BLOCK_IS_GLOBAL ({BLOCK_IS_GLOBAL:#010x}) not set in flags")
 
         reserved = br.read32()
+        if reserved is None:
+            raise BlockLiteral.NotABlockLiteralError("reserved does not exist")
 
         invoke = br.read64()
+        if invoke is None:
+            raise BlockLiteral.NotABlockLiteralError("invoke does not exist")
         if invoke == 0:
             raise BlockLiteral.NotABlockLiteralError("invoke is NULL")
 
         descriptor = br.read64()
+        if descriptor is None:
+            raise BlockLiteral.NotABlockLiteralError("descriptor does not exist")
+        if descriptor == 0:
+            raise BlockLiteral.NotABlockLiteralError("descriptor is NULL")
 
         return cls(bv, is_stack_block, bl_data_var, isa, flags, reserved, invoke, descriptor)
 
@@ -487,6 +499,12 @@ class BlockLiteral:
         missing_vars = list(filter(lambda vn: vn not in local_vars, ('isa', 'flags', 'reserved', 'invoke', 'descriptor')))
         if len(missing_vars) > 0:
             raise BlockLiteral.FailedToFindFieldsError(f"{', '.join(missing_vars)}; likely due to complex HLIL")
+
+        if invoke == 0:
+            raise BlockLiteral.NotABlockLiteralError("invoke is NULL")
+        if descriptor == 0:
+            raise BlockLiteral.NotABlockLiteralError("descriptor is NULL")
+
         return cls(bv, is_stack_block, bl_insn, isa, flags, reserved, invoke, descriptor)
 
     def __init__(self, bv, is_stack_block, insn_or_data_var, isa, flags, reserved, invoke, descriptor):
