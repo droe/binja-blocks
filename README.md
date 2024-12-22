@@ -33,7 +33,7 @@ Commands:
 -   Annotate all stack blocks
 -   Annotate global block here
 -   Annotate stack block here
--   Remove plugin comment here
+-   Remove plugin comment here (deprecated)
 
 Features:
 
