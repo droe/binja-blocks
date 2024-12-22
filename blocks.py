@@ -175,6 +175,13 @@ BLOCK_LAYOUT_BYREF                  = 0x4   # lo nibble # byref pointers
 BLOCK_LAYOUT_WEAK                   = 0x5   # lo nibble # weak pointers
 BLOCK_LAYOUT_UNRETAINED             = 0x6   # lo nibble # unretained pointers
 
+BCK_DONE                            = 0x0
+BCK_NON_OBJECT_BYTES                = 0x1
+BCK_NON_OBJECT_WORDS                = 0x2
+BCK_STRONG                          = 0x3
+BCK_BLOCK                           = 0x4
+BCK_BYREF                           = 0x5
+BCK_WEAK                            = 0x6
 
 def _get_custom_type_internal(bv, name, typestr, source, dependency=None):
     assert (name is None) != (typestr is None)
@@ -260,20 +267,6 @@ def _define_ns_concrete_block_imports(bv):
             break
 
 
-def _append_with_offset_suffix(self, type_, name):
-    """
-    Append a field with type and name to the StructureBuilder,
-    and append the offset of the field to the name.
-    Monkey-patching this in to avoid a lot of duplicate code.
-    """
-    self.append(type_, name)
-    self.replace(len(self.members) - 1,
-                 self.members[-1].type,
-                 f"{self.members[-1].name}{self.members[-1].offset:x}")
-    return self
-binja.StructureBuilder.append_with_offset_suffix = _append_with_offset_suffix
-
-
 def _blocks_plugin_logger(self):
     """
     Get this plugin's logger for the view.
@@ -289,74 +282,123 @@ def _blocks_plugin_logger(self):
 binja.BinaryView.blocks_plugin_logger = property(_blocks_plugin_logger)
 
 
-def append_layout_fields(bv, struct, layout, block_has_extended_layout, byref_indexes=None, layout_end_obj=None):
+def append_layout_fields(bv, struct,
+                         generic_helper_type, generic_helper_info, generic_helper_info_bytecode,
+                         block_has_extended_layout, layout, layout_bytecode,
+                         byref_indexes=None):
     """
-    Append fields specified by layout to struct.
-    If byref_indexes is given, the struct member index of all byref pointers is
-    appended to byref_indexes.  If layout_end_obj is given, and layout is an
-    extended layout bytecode, set layout_end_obj.layout_end to the end address
-    of the bytecode.
-    """
-    if layout == 0:
-        return
-    if not block_has_extended_layout:
-        # Either "old GC layout" or ABI.2010.3.16 as per
-        # https://clang.llvm.org/docs/Block-ABI-Apple.html,
-        # we don't know how to reliably detect the latter
-        # and we don't know the semantics of the former, so
-        # don't attempt annotation.
-        return
+    Append fields for imported variables to struct, which is either
+    a block literal struct or a byref struct.
 
+    If generic helper info is available, derive the field layout
+    from generic_helper_info and generic_helper_info_bytecode.
+    Otherwise, if layout is available, derive the field layout
+    from layout and layout_bytecode.
+    If neither is available, do not append any fields to struct.
+
+    If byref_indexes is given, the struct member index of all byref
+    pointers is appended to byref_indexes.
+    """
     id_type = _parse_objc_type(bv, "id")
     u64_type = bv.parse_type_string("uint64_t")[0]
 
-    if layout < 0x1000:
-        # compact encoding
-        n_strong_ptrs = (layout >> 8) & 0xf
-        n_byref_ptrs = (layout >> 4) & 0xf
-        n_weak_ptrs = layout & 0xf
+    if generic_helper_type == BLOCK_GENERIC_HELPER_INLINE:
+        assert generic_helper_info_bytecode is None
+        assert generic_helper_info is not None
+        assert isinstance(generic_helper_info, int)
+        assert (0xFFFFFFFFF00000FF & generic_helper_info) == 0
+        n_strong_ptrs = (generic_helper_info >> 8) & 0xf
+        n_block_ptrs = (generic_helper_info >> 12) & 0xf
+        n_byref_ptrs = (generic_helper_info >> 16) & 0xf
+        n_weak_ptrs = (generic_helper_info >> 20) & 0xf
         for _ in range(n_strong_ptrs):
             struct.append_with_offset_suffix(id_type, "strong_ptr_")
+        for _ in range(n_block_ptrs):
+            struct.append_with_offset_suffix(id_type, "block_ptr_")
         for _ in range(n_byref_ptrs):
             if byref_indexes is not None:
                 byref_indexes.append(len(struct.members))
             struct.append_with_offset_suffix(id_type, "byref_ptr_")
         for _ in range(n_weak_ptrs):
             struct.append_with_offset_suffix(id_type, "weak_ptr_")
-    else:
-        # bytecode encoding
-        br = binja.BinaryReader(bv)
-        br.seek(layout)
-        while True:
-            op = br.read8()
+        return
+
+    if generic_helper_type == BLOCK_GENERIC_HELPER_OUTOFLINE:
+        assert generic_helper_info_bytecode is not None
+        for op in generic_helper_info_bytecode[1:]:
             opcode = (op & 0xf0) >> 4
             oparg = (op & 0x0f)
-            if opcode == BLOCK_LAYOUT_ESCAPE:
+            if opcode == BCK_DONE:
                 break
-            elif opcode == BLOCK_LAYOUT_NON_OBJECT_BYTES:
+            elif opcode == BCK_NON_OBJECT_BYTES:
                 struct.append_with_offset_suffix(bv.parse_type_string(f"uint8_t [{oparg}]")[0], "non_object_")
-            elif opcode == BLOCK_LAYOUT_NON_OBJECT_WORDS:
+            elif opcode == BCK_NON_OBJECT_WORDS:
                 for _ in range(oparg):
                     struct.append_with_offset_suffix(u64_type, "non_object_")
-            elif opcode == BLOCK_LAYOUT_STRONG:
+            elif opcode == BCK_STRONG:
                 for _ in range(oparg):
                     struct.append_with_offset_suffix(id_type, "strong_ptr_")
-            elif opcode == BLOCK_LAYOUT_BYREF:
+            elif opcode == BCK_BLOCK:
+                for _ in range(oparg):
+                    struct.append_with_offset_suffix(id_type, "block_ptr_")
+            elif opcode == BCK_BYREF:
                 for _ in range(oparg):
                     if byref_indexes is not None:
                         byref_indexes.append(len(struct.members))
                     struct.append_with_offset_suffix(id_type, "byref_ptr_")
-            elif opcode == BLOCK_LAYOUT_WEAK:
+            elif opcode == BCK_WEAK:
                 for _ in range(oparg):
                     struct.append_with_offset_suffix(id_type, "weak_ptr_")
-            elif opcode == BLOCK_LAYOUT_UNRETAINED:
-                for _ in range(oparg):
-                    struct.append_with_offset_suffix(id_type, "unretained_ptr_")
             else:
-                bv.blocks_plugin_logger.log_warn(f"Unknown extended layout op {op:#04x}")
+                bv.blocks_plugin_logger.log_warn(f"Unknown generic helper op {op:#04x}")
                 break
-        if layout_end_obj is not None:
-            layout_end_obj.layout_end = br.offset
+        return
+
+    if block_has_extended_layout and layout != 0:
+        if layout < 0x1000:
+            # inline layout encoding
+            assert layout_bytecode is None
+            n_strong_ptrs = (layout >> 8) & 0xf
+            n_byref_ptrs = (layout >> 4) & 0xf
+            n_weak_ptrs = layout & 0xf
+            for _ in range(n_strong_ptrs):
+                struct.append_with_offset_suffix(id_type, "strong_ptr_")
+            for _ in range(n_byref_ptrs):
+                if byref_indexes is not None:
+                    byref_indexes.append(len(struct.members))
+                struct.append_with_offset_suffix(id_type, "byref_ptr_")
+            for _ in range(n_weak_ptrs):
+                struct.append_with_offset_suffix(id_type, "weak_ptr_")
+        else:
+            # out-of-line layout string
+            assert layout_bytecode is not None
+            for op in layout_bytecode:
+                opcode = (op & 0xf0) >> 4
+                oparg = (op & 0x0f)
+                if opcode == BLOCK_LAYOUT_ESCAPE:
+                    break
+                elif opcode == BLOCK_LAYOUT_NON_OBJECT_BYTES:
+                    struct.append_with_offset_suffix(bv.parse_type_string(f"uint8_t [{oparg}]")[0], "non_object_")
+                elif opcode == BLOCK_LAYOUT_NON_OBJECT_WORDS:
+                    for _ in range(oparg):
+                        struct.append_with_offset_suffix(u64_type, "non_object_")
+                elif opcode == BLOCK_LAYOUT_STRONG:
+                    for _ in range(oparg):
+                        struct.append_with_offset_suffix(id_type, "strong_ptr_")
+                elif opcode == BLOCK_LAYOUT_BYREF:
+                    for _ in range(oparg):
+                        if byref_indexes is not None:
+                            byref_indexes.append(len(struct.members))
+                        struct.append_with_offset_suffix(id_type, "byref_ptr_")
+                elif opcode == BLOCK_LAYOUT_WEAK:
+                    for _ in range(oparg):
+                        struct.append_with_offset_suffix(id_type, "weak_ptr_")
+                elif opcode == BLOCK_LAYOUT_UNRETAINED:
+                    for _ in range(oparg):
+                        struct.append_with_offset_suffix(id_type, "unretained_ptr_")
+                else:
+                    bv.blocks_plugin_logger.log_warn(f"Unknown extended layout op {op:#04x}")
+                    break
 
 
 class BlockLiteral:
@@ -490,12 +532,10 @@ class BlockLiteral:
         struct.append(binja.Type.pointer(self._bv.arch, _parse_libclosure_type(self._bv, "struct Block_descriptor_1")), "descriptor") # placeholder
         self.byref_indexes = []
         if bd.imported_variables_size > 0 and bd.block_has_signature and bd.layout is not None:
-            append_layout_fields(self._bv,
-                                 struct,
-                                 bd.layout,
-                                 bd.block_has_extended_layout,
-                                 self.byref_indexes,
-                                 layout_end_obj=bd)
+            append_layout_fields(self._bv, struct,
+                                 bd.generic_helper_type, bd.generic_helper_info, bd.generic_helper_info_bytecode,
+                                 bd.block_has_extended_layout, bd.layout, bd.layout_bytecode,
+                                 self.byref_indexes)
         self.struct_builder = struct
         self.struct_name = f"Block_literal_{self.address:x}"
         self._bv.define_type(binja.Type.generate_auto_type_id(_TYPE_ID_SOURCE, self.struct_name), self.struct_name, self.struct_builder)
@@ -544,14 +584,6 @@ class BlockLiteral:
         except SyntaxError:
             # XXX if struct or union and we have member type info, create struct or union and retry
             return self._bv.parse_type_string(fallback)[0]
-
-    def annotate_layout_bytecode(self, bd):
-        if bd.block_has_signature and bd.block_has_extended_layout and bd.layout >= 0x1000:
-            n = bd.layout_end - bd.layout
-            shinobi.make_data_var(self._bv,
-                                  bd.layout,
-                                  self._bv.parse_type_string(f"uint8_t [{n}]")[0],
-                                  f"block_layout_{bd.layout:x}")
 
     def annotate_functions(self, bd):
         """
@@ -624,6 +656,8 @@ class BlockLiteral:
 
             if invoke_func.name == f"sub_{invoke_func.start:x}":
                 invoke_func.name = f"sub_{invoke_func.start:x}_block_invoke"
+
+        # XXX move remainder to BlockDescriptor
 
         if bd.block_has_copy_dispose:
             # Interleave annotation of the two functions in order to minimize
@@ -716,18 +750,34 @@ class BlockDescriptor:
                 #    unsure if this ever existed outside of spec documents.
                 #    We'd want to handle this case differently if we had a way to recognise it.
                 self.layout = br.read64()
+                if self.layout >= 0x1000:
+                    # out-of-line layout string
+                    self.layout_bytecode = self._bv.get_raw_string_at(self.layout)
+                else:
+                    # inline layout encoding
+                    self.layout_bytecode = None
             else:
                 # Cases handled by not reading and not marking up a layout field:
                 # f) Stack blocks without extended layout, without generic helper info,
                 #    with custom copy/dispose handlers.  These seem to sometimes get
                 #    emitted without a layout field.
                 self.layout = None
+                self.layout_bytecode = None
 
         if self.generic_helper_type in (BLOCK_GENERIC_HELPER_INLINE,
                                         BLOCK_GENERIC_HELPER_OUTOFLINE):
             br.seek(self.address - self._bv.arch.address_size)
             assert self._bv.arch.address_size == 8
             self.generic_helper_info = br.read64()
+            if self.generic_helper_type == BLOCK_GENERIC_HELPER_OUTOFLINE:
+                assert self.generic_helper_info != 0
+                # min_len=1 to include the reserved byte in bytecode even if it's 0.
+                self.generic_helper_info_bytecode = self._bv.get_raw_string_at(self.generic_helper_info, min_len=1)
+            else:
+                self.generic_helper_info_bytecode = None
+        else:
+            self.generic_helper_info = None
+            self.generic_helper_info_bytecode = None
 
     @property
     def imported_variables_size(self):
@@ -786,8 +836,10 @@ class BlockDescriptor:
             struct.append(self._bv.parse_type_string("char const *signature")[0], "signature")
             if self.layout is not None:
                 if self.layout < 0x1000:
+                    # inline layout encoding
                     struct.append(self._bv.parse_type_string("uint64_t layout")[0], "layout")
                 else:
+                    # out-of-line layout string
                     struct.append(self._bv.parse_type_string("uint8_t const *layout")[0], "layout")
             else:
                 # Skip the layout field, see ctor for rationale.
@@ -815,11 +867,33 @@ class BlockDescriptor:
             if self.generic_helper_type == BLOCK_GENERIC_HELPER_INLINE:
                 generic_helper_info_type = self._bv.parse_type_string("uint64_t")[0]
             else:
-                generic_helper_info_type = self._bv.parse_type_string("void *")[0]
+                generic_helper_info_type = self._bv.parse_type_string("uint8_t const *")[0]
             shinobi.make_data_var(self._bv,
                                   self.address - self._bv.arch.address_size,
                                   generic_helper_info_type,
                                   f"block_descriptor_{self.address:x}_generic_helper_info")
+
+    def annotate_layout_bytecode(self):
+        """
+        Annotate the out-of-line layout string, if one exists.
+        """
+        if self.block_has_signature and self.block_has_extended_layout and self.layout >= 0x1000:
+            n = len(self.layout_bytecode)
+            shinobi.make_data_var(self._bv,
+                                  self.layout,
+                                  self._bv.parse_type_string(f"uint8_t [{n}]")[0],
+                                  f"block_layout_{self.layout:x}")
+
+    def annotate_generic_helper_info_bytecode(self):
+        """
+        Annotate the out-of-line generic helper info string, if one exists.
+        """
+        if self.generic_helper_type == BLOCK_GENERIC_HELPER_OUTOFLINE:
+            n = len(self.generic_helper_info_bytecode)
+            shinobi.make_data_var(self._bv,
+                                  self.generic_helper_info,
+                                  self._bv.parse_type_string(f"uint8_t [{n}]")[0],
+                                  f"block_generic_helper_info_{self.generic_helper_info:x}")
 
 
 def annotate_global_block_literal(bv, block_literal_addr, sym_addrs=None):
@@ -869,7 +943,8 @@ def annotate_global_block_literal(bv, block_literal_addr, sym_addrs=None):
         bv.blocks_plugin_logger.log_info(str(bd))
         bl.annotate_literal(bd)
         bd.annotate_descriptor(bl)
-        bl.annotate_layout_bytecode(bd)
+        bd.annotate_layout_bytecode()
+        bd.annotate_generic_helper_info_bytecode()
         bl.annotate_functions(bd)
     except BlockLiteral.NotABlockLiteralError as e:
         bv.blocks_plugin_logger.log_warn(f"{where}: Not a block literal: {e}")
@@ -949,7 +1024,8 @@ def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
         bv.blocks_plugin_logger.log_info(str(bd))
         bl.annotate_literal(bd)
         bd.annotate_descriptor(bl)
-        bl.annotate_layout_bytecode(bd)
+        bd.annotate_layout_bytecode()
+        bd.annotate_generic_helper_info_bytecode()
         bl.annotate_functions(bd)
     except BlockLiteral.NotABlockLiteralError as e:
         bv.blocks_plugin_logger.log_warn(f"{where}: Not a block literal: {e}")
@@ -1077,6 +1153,7 @@ def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
                                     isinstance(insn, binja.HighLevelILVarDeclare) and \
                                     str(insn.var.type).startswith('struct'))
                     byref_insn_var = byref_insn.var
+                    byref_layout = None
                     for insn in shinobi.yield_struct_field_assign_hlil_instructions_for_var_id(byref_insn.function, byref_insn_var.identifier):
                         if insn.dest.member_index == layout_index:
                             if isinstance(insn.src, (binja.HighLevelILConst,
@@ -1085,14 +1162,20 @@ def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
                                 break
                     else:
                         bv.blocks_plugin_logger.log_warn(f"Block byref at {byref_insn.address:x}: Failed to find layout assignment")
-                        byref_layout = 0
-
-                    if byref_layout != 0:
+                    if byref_layout is not None and byref_layout != 0:
                         if byref_layout < 0x1000:
+                            # inline layout encoding
+                            byref_layout_bytecode = None
                             byref_struct.replace(layout_index, bv.parse_type_string("uint64_t layout")[0], "layout")
                         else:
+                            # out-of-line layout string
+                            byref_layout_bytecode = bv.get_raw_string_at(byref_layout)
                             byref_struct.replace(layout_index, bv.parse_type_string("uint8_t const *layout")[0], "layout")
-                    append_layout_fields(bv, byref_struct, byref_layout, block_has_extended_layout=True)
+                    else:
+                        byref_layout_bytecode = None
+                    append_layout_fields(bv, byref_struct,
+                                         BLOCK_GENERIC_HELPER_NONE, None, None,
+                                         byref_layout is not None, byref_layout, byref_layout_bytecode)
                 elif byref_layout_nibble == BLOCK_BYREF_LAYOUT_NON_OBJECT:
                     byref_struct.append_with_offset_suffix(bv.parse_type_string("uint64_t non_object")[0], "non_object_")
                 elif byref_layout_nibble == BLOCK_BYREF_LAYOUT_STRONG:

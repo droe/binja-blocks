@@ -38,14 +38,15 @@ Commands:
 Features:
 
 -   Find and annotate global and stack blocks
--   Annotate block imported variables for extended layout with compact or
-    bytecode layout encodings
+-   Annotate block imported variables based on inline or out-of-line
+    generic helper info or extended layout
 -   Annotate block invoke function type based on encoded block ObjC type
     signature
--   Annotate block descriptors and copy/dispose functions
--   Annotate stack byrefs (`__block` variables) for non-extended layout as
-    well as extended layout with compact or bytecode layout encodings,
-    including keep and destroy functions
+-   Annotate block descriptors, copy/dispose functions, generic helper info
+    and out-of-line extended layout bytecode
+-   Annotate stack byrefs (`__block` variables) based on non-extended
+    layout or inline or out-of-line extended layout, including keep and
+    destroy functions
 -   Define per-block and per-byref named structs to allow for manual fixups
 -   Define structs for fully manual annotation: `Block_literal`,
     `Block_descriptor_1`, `Block_descriptor_2`, `Block_descriptor_3`,

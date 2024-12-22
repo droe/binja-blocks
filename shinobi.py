@@ -235,3 +235,39 @@ def yield_struct_field_assign_hlil_instructions_for_var_id(hlil_func, var_id):
             continue
 
         yield insn
+
+
+def _append_with_offset_suffix(self, type_, name):
+    """
+    Append a field with type and name to the StructureBuilder,
+    and append the offset of the field to the name.
+    Monkey-patching this in to avoid a lot of duplicate code.
+    """
+    self.append(type_, name)
+    self.replace(len(self.members) - 1,
+                 self.members[-1].type,
+                 f"{self.members[-1].name}{self.members[-1].offset:x}")
+    return self
+binja.StructureBuilder.append_with_offset_suffix = _append_with_offset_suffix
+
+
+def _get_raw_string_at(self, addr, min_len=0):
+    """
+    Read a NUL-terminated string from address.
+    Returns bytes including the terminating NUL.
+    The first min_len bytes can contain
+    non-terminating NUL characters.
+    Does not attempt to decode the string and will
+    happily read invalid UTF-8.
+    Does not create a StringReference.
+    Does not annotate anything.
+    """
+    br = binja.BinaryReader(self)
+    br.seek(addr)
+    octets = []
+    while len(octets) < min_len:
+        octets.append(br.read8())
+    while len(octets) == 0 or octets[-1] != 0:
+        octets.append(br.read8())
+    return bytes(octets)
+binja.BinaryView.get_raw_string_at = _get_raw_string_at
