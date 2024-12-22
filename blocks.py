@@ -283,6 +283,151 @@ def _blocks_plugin_logger(self):
 binja.BinaryView.blocks_plugin_logger = property(_blocks_plugin_logger)
 
 
+class Layout:
+    """
+    Represents a block literal or byref layout, describing the memory layout of
+    the imported variables included in the block literal or byref.  In the case
+    of the block literals, these are variables the block closes over (captures).
+    """
+    class Field:
+        """
+        Represents a single field, or series of identical fields.
+        """
+        def __init__(self, name_prefix, field_type, count=1, *, is_byref=False):
+            self.name_prefix = name_prefix
+            self.field_type = field_type
+            self.count = count
+            self.is_byref = is_byref
+
+    @classmethod
+    def from_generic_helper_info(cls, bv, generic_helper_type, generic_helper_info, generic_helper_info_bytecode):
+        id_type = _parse_objc_type(bv, "id")
+
+        fields = []
+
+        if generic_helper_type == BLOCK_GENERIC_HELPER_INLINE:
+            assert generic_helper_info_bytecode is None
+            assert generic_helper_info is not None
+            assert isinstance(generic_helper_info, int)
+            assert (0xFFFFFFFFF00000FF & generic_helper_info) == 0
+
+            n_strong_ptrs = (generic_helper_info >> 8) & 0xf
+            n_block_ptrs = (generic_helper_info >> 12) & 0xf
+            n_byref_ptrs = (generic_helper_info >> 16) & 0xf
+            n_weak_ptrs = (generic_helper_info >> 20) & 0xf
+
+            if n_strong_ptrs > 0:
+                fields.append(Layout.Field("strong_ptr_", id_type, n_strong_ptrs))
+            if n_block_ptrs > 0:
+                fields.append(Layout.Field("block_ptr_", id_type, n_block_ptrs))
+            if n_byref_ptrs > 0:
+                fields.append(Layout.Field("byref_ptr_", id_type, n_byref_ptrs, is_byref=True))
+            if n_weak_ptrs > 0:
+                fields.append(Layout.Field("weak_ptr_", id_type, n_weak_ptrs))
+
+        elif generic_helper_type == BLOCK_GENERIC_HELPER_OUTOFLINE:
+            assert generic_helper_info_bytecode is not None
+
+            for op in generic_helper_info_bytecode[1:]:
+                opcode = (op & 0xf0) >> 4
+                oparg = (op & 0x0f)
+                if opcode == BCK_DONE:
+                    break
+                elif opcode == BCK_NON_OBJECT_BYTES:
+                    fields.append(Layout.Field("non_object_", bv.parse_type_string(f"uint8_t [{oparg}]")[0]))
+                elif opcode == BCK_NON_OBJECT_WORDS:
+                    fields.append(Layout.Field("non_object_", bv.parse_type_string("uint64_t")[0], oparg))
+                elif opcode == BCK_STRONG:
+                    fields.append(Layout.Field("strong_ptr_", id_type, oparg))
+                elif opcode == BCK_BLOCK:
+                    fields.append(Layout.Field("block_ptr_", id_type, oparg))
+                elif opcode == BCK_BYREF:
+                    fields.append(Layout.Field("byref_ptr_", id_type, oparg, is_byref=True))
+                elif opcode == BCK_WEAK:
+                    fields.append(Layout.Field("weak_ptr_", id_type, oparg))
+                else:
+                    bv.blocks_plugin_logger.log_warn(f"Unknown out-of-line generic helper op {op:#04x}")
+                    break
+
+        return cls(fields)
+
+    @classmethod
+    def from_layout(cls, bv, block_has_extended_layout, layout, layout_bytecode):
+        id_type = _parse_objc_type(bv, "id")
+
+        fields = []
+
+        if block_has_extended_layout and layout != 0:
+            if layout < 0x1000:
+                # inline layout encoding
+                assert layout_bytecode is None
+
+                n_strong_ptrs = (layout >> 8) & 0xf
+                n_byref_ptrs = (layout >> 4) & 0xf
+                n_weak_ptrs = layout & 0xf
+
+                if n_strong_ptrs > 0:
+                    fields.append(Layout.Field("strong_ptr_", id_type, n_strong_ptrs))
+                if n_byref_ptrs > 0:
+                    fields.append(Layout.Field("byref_ptr_", id_type, n_byref_ptrs, is_byref=True))
+                if n_weak_ptrs > 0:
+                    fields.append(Layout.Field("weak_ptr_", id_type, n_weak_ptrs))
+
+            else:
+                # out-of-line layout string
+                assert layout_bytecode is not None
+
+                for op in layout_bytecode:
+                    opcode = (op & 0xf0) >> 4
+                    oparg = (op & 0x0f)
+                    if opcode == BLOCK_LAYOUT_ESCAPE:
+                        break
+                    elif opcode == BLOCK_LAYOUT_NON_OBJECT_BYTES:
+                        fields.append(Layout.Field("non_object_", bv.parse_type_string(f"uint8_t [{oparg}]")[0]))
+                    elif opcode == BLOCK_LAYOUT_NON_OBJECT_WORDS:
+                        fields.append(Layout.Field("non_object_", bv.parse_type_string("uint64_t")[0], oparg))
+                    elif opcode == BLOCK_LAYOUT_STRONG:
+                        fields.append(Layout.Field("strong_ptr_", id_type, oparg))
+                    elif opcode == BLOCK_LAYOUT_BYREF:
+                        fields.append(Layout.Field("byref_ptr_", id_type, oparg, is_byref=True))
+                    elif opcode == BLOCK_LAYOUT_WEAK:
+                        fields.append(Layout.Field("weak_ptr_", id_type, oparg))
+                    elif opcode == BLOCK_LAYOUT_UNRETAINED:
+                        fields.append(Layout.Field("unretained_ptr_", id_type, oparg))
+                    else:
+                        bv.blocks_plugin_logger.log_warn(f"Unknown out-of-line extended layout op {op:#04x}")
+                        break
+
+        return cls(fields)
+
+    def __init__(self, fields):
+        self._fields = fields
+
+    @property
+    def byref_count(self):
+        return sum([f.count for f in self._fields if f.is_byref])
+
+    @property
+    def bytes_count(self):
+        return sum([f.count * f.field_type.width for f in self._fields])
+
+    def prefer_over(self, other):
+        if self.byref_count < other.byref_count:
+            return False
+        if self.bytes_count < other.bytes_count:
+            return False
+        return True
+
+    def append_fields(self, struct):
+        byref_indexes = []
+        for field in self._fields:
+            if field.is_byref:
+                byref_indexes.append(len(struct.members))
+            for _ in range(field.count):
+                struct.append_with_offset_suffix(field.field_type, field.name_prefix)
+        return byref_indexes
+
+
 def append_layout_fields(bv, struct,
                          generic_helper_type, generic_helper_info, generic_helper_info_bytecode,
                          block_has_extended_layout, layout, layout_bytecode,
@@ -291,115 +436,28 @@ def append_layout_fields(bv, struct,
     Append fields for imported variables to struct, which is either
     a block literal struct or a byref struct.
 
-    If generic helper info is available, derive the field layout
+    If only generic helper info is available, derive the field layout
     from generic_helper_info and generic_helper_info_bytecode.
-    Otherwise, if layout is available, derive the field layout
+    Otherwise, if only layout is available, derive the field layout
     from layout and layout_bytecode.
-    If neither is available, do not append any fields to struct.
+    If neither are available, do not append any fields to struct.
+    If both are available, chose the better layout:  More byrefs wins,
+    if tied then more bytes covered by fields wins.
 
     If byref_indexes is given, the struct member index of all byref
     pointers is appended to byref_indexes.
     """
-    id_type = _parse_objc_type(bv, "id")
-    u64_type = bv.parse_type_string("uint64_t")[0]
-
-    if generic_helper_type == BLOCK_GENERIC_HELPER_INLINE:
-        assert generic_helper_info_bytecode is None
-        assert generic_helper_info is not None
-        assert isinstance(generic_helper_info, int)
-        assert (0xFFFFFFFFF00000FF & generic_helper_info) == 0
-        n_strong_ptrs = (generic_helper_info >> 8) & 0xf
-        n_block_ptrs = (generic_helper_info >> 12) & 0xf
-        n_byref_ptrs = (generic_helper_info >> 16) & 0xf
-        n_weak_ptrs = (generic_helper_info >> 20) & 0xf
-        for _ in range(n_strong_ptrs):
-            struct.append_with_offset_suffix(id_type, "strong_ptr_")
-        for _ in range(n_block_ptrs):
-            struct.append_with_offset_suffix(id_type, "block_ptr_")
-        for _ in range(n_byref_ptrs):
-            if byref_indexes is not None:
-                byref_indexes.append(len(struct.members))
-            struct.append_with_offset_suffix(id_type, "byref_ptr_")
-        for _ in range(n_weak_ptrs):
-            struct.append_with_offset_suffix(id_type, "weak_ptr_")
-        return
-
-    if generic_helper_type == BLOCK_GENERIC_HELPER_OUTOFLINE:
-        assert generic_helper_info_bytecode is not None
-        for op in generic_helper_info_bytecode[1:]:
-            opcode = (op & 0xf0) >> 4
-            oparg = (op & 0x0f)
-            if opcode == BCK_DONE:
-                break
-            elif opcode == BCK_NON_OBJECT_BYTES:
-                struct.append_with_offset_suffix(bv.parse_type_string(f"uint8_t [{oparg}]")[0], "non_object_")
-            elif opcode == BCK_NON_OBJECT_WORDS:
-                for _ in range(oparg):
-                    struct.append_with_offset_suffix(u64_type, "non_object_")
-            elif opcode == BCK_STRONG:
-                for _ in range(oparg):
-                    struct.append_with_offset_suffix(id_type, "strong_ptr_")
-            elif opcode == BCK_BLOCK:
-                for _ in range(oparg):
-                    struct.append_with_offset_suffix(id_type, "block_ptr_")
-            elif opcode == BCK_BYREF:
-                for _ in range(oparg):
-                    if byref_indexes is not None:
-                        byref_indexes.append(len(struct.members))
-                    struct.append_with_offset_suffix(id_type, "byref_ptr_")
-            elif opcode == BCK_WEAK:
-                for _ in range(oparg):
-                    struct.append_with_offset_suffix(id_type, "weak_ptr_")
-            else:
-                bv.blocks_plugin_logger.log_warn(f"Unknown generic helper op {op:#04x}")
-                break
-        return
-
-    if block_has_extended_layout and layout != 0:
-        if layout < 0x1000:
-            # inline layout encoding
-            assert layout_bytecode is None
-            n_strong_ptrs = (layout >> 8) & 0xf
-            n_byref_ptrs = (layout >> 4) & 0xf
-            n_weak_ptrs = layout & 0xf
-            for _ in range(n_strong_ptrs):
-                struct.append_with_offset_suffix(id_type, "strong_ptr_")
-            for _ in range(n_byref_ptrs):
-                if byref_indexes is not None:
-                    byref_indexes.append(len(struct.members))
-                struct.append_with_offset_suffix(id_type, "byref_ptr_")
-            for _ in range(n_weak_ptrs):
-                struct.append_with_offset_suffix(id_type, "weak_ptr_")
-        else:
-            # out-of-line layout string
-            assert layout_bytecode is not None
-            for op in layout_bytecode:
-                opcode = (op & 0xf0) >> 4
-                oparg = (op & 0x0f)
-                if opcode == BLOCK_LAYOUT_ESCAPE:
-                    break
-                elif opcode == BLOCK_LAYOUT_NON_OBJECT_BYTES:
-                    struct.append_with_offset_suffix(bv.parse_type_string(f"uint8_t [{oparg}]")[0], "non_object_")
-                elif opcode == BLOCK_LAYOUT_NON_OBJECT_WORDS:
-                    for _ in range(oparg):
-                        struct.append_with_offset_suffix(u64_type, "non_object_")
-                elif opcode == BLOCK_LAYOUT_STRONG:
-                    for _ in range(oparg):
-                        struct.append_with_offset_suffix(id_type, "strong_ptr_")
-                elif opcode == BLOCK_LAYOUT_BYREF:
-                    for _ in range(oparg):
-                        if byref_indexes is not None:
-                            byref_indexes.append(len(struct.members))
-                        struct.append_with_offset_suffix(id_type, "byref_ptr_")
-                elif opcode == BLOCK_LAYOUT_WEAK:
-                    for _ in range(oparg):
-                        struct.append_with_offset_suffix(id_type, "weak_ptr_")
-                elif opcode == BLOCK_LAYOUT_UNRETAINED:
-                    for _ in range(oparg):
-                        struct.append_with_offset_suffix(id_type, "unretained_ptr_")
-                else:
-                    bv.blocks_plugin_logger.log_warn(f"Unknown extended layout op {op:#04x}")
-                    break
+    generic_helper_layout = Layout.from_generic_helper_info(bv, generic_helper_type, generic_helper_info, generic_helper_info_bytecode)
+    layout_layout = Layout.from_layout(bv, block_has_extended_layout, layout, layout_bytecode)
+    if generic_helper_layout.prefer_over(layout_layout):
+        bv.blocks_plugin_logger.log_debug("Preferring generic helper info over layout")
+        chosen_layout = generic_helper_layout
+    else:
+        bv.blocks_plugin_logger.log_debug("Preferring layout over generic helper info")
+        chosen_layout = layout_layout
+    byref_indexes_ = chosen_layout.append_fields(struct)
+    if byref_indexes is not None:
+        byref_indexes.extend(byref_indexes_)
 
 
 class BlockLiteral:
