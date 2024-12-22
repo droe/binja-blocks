@@ -28,13 +28,17 @@ from . import shinobi
 from . import objctypes
 
 
-def is_valid(bv, arg=None):
-    return bv.arch.name in (
-        'aarch64',
-        'x86_64',
-        #'armv7',
-        #'x86',
-    )
+# Had to disable is_valid due to spurious exceptions in Binary Ninja Core.
+# https://github.com/Vector35/binaryninja-api/issues/6254
+# https://github.com/droe/binja-blocks/issues/5
+is_valid = None
+#def is_valid(bv, arg=None):
+#    return bv.arch.name in (
+#        'aarch64',
+#        'x86_64',
+#        #'armv7',
+#        #'x86',
+#    )
 
 
 _TYPE_ID_SOURCE = "binja-blocks"
