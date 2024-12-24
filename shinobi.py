@@ -169,7 +169,7 @@ def _yield_symbols_of_type(self, name, type_):
     """
     for sym in filter(lambda x: x.type == type_, self.symbols.get(name, [])):
         yield sym
-binja.BinaryView.yield_symbols_of_type = _yield_symbols_of_type
+binja.BinaryView.x_yield_symbols_of_type = _yield_symbols_of_type
 
 
 def _get_symbol_of_type(self, name, type_):
@@ -177,10 +177,10 @@ def _get_symbol_of_type(self, name, type_):
     Find a symbol of a specific type and return the first one found.
     """
     try:
-        return next(self.yield_symbols_of_type(name, type_))
+        return next(self.x_yield_symbols_of_type(name, type_))
     except StopIteration:
         return None
-binja.BinaryView.get_symbol_of_type = _get_symbol_of_type
+binja.BinaryView.x_get_symbol_of_type = _get_symbol_of_type
 
 
 def _get_symbol_addresses_set(self, name):
@@ -190,7 +190,7 @@ def _get_symbol_addresses_set(self, name):
     syms = self.symbols.get(name, [])
     syms = filter(lambda sym: sym.address is not None and sym.address != 0, syms)
     return set([sym.address for sym in syms])
-binja.BinaryView.get_symbol_addresses_set = _get_symbol_addresses_set
+binja.BinaryView.x_get_symbol_addresses_set = _get_symbol_addresses_set
 
 
 def _make_data_var(self, address, type_, name=None):
@@ -209,7 +209,7 @@ def _make_data_var(self, address, type_, name=None):
         if name is not None:
             data_var.name = name
         data_var.type = type_
-binja.BinaryView.make_data_var = _make_data_var
+binja.BinaryView.x_make_data_var = _make_data_var
 
 
 def _reload_hlil_instruction(self, hlil_insn, predicate=None):
@@ -233,12 +233,12 @@ def _reload_hlil_instruction(self, hlil_insn, predicate=None):
         reloaded_insn = None
     assert reloaded_insn is not None
     return reloaded_insn
-binja.BinaryView.reload_hlil_instruction = _reload_hlil_instruction
+binja.BinaryView.x_reload_hlil_instruction = _reload_hlil_instruction
 
 
-def _get_raw_string_at(self, addr, min_len=0):
+def _get_byte_string_at(self, addr, min_len=0):
     """
-    Read a NUL-terminated string from address.
+    Read a NUL-terminated byte string from address.
     Returns bytes including the terminating NUL.
     The first min_len bytes can contain
     non-terminating NUL characters.
@@ -257,7 +257,7 @@ def _get_raw_string_at(self, addr, min_len=0):
     if any([c is None for c in octets]):
         return None
     return bytes(octets)
-binja.BinaryView.get_raw_string_at = _get_raw_string_at
+binja.BinaryView.x_get_byte_string_at = _get_byte_string_at
 
 
 #

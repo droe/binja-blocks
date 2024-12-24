@@ -261,10 +261,10 @@ def _define_ns_concrete_block_imports(bv):
     objc_class_type = _parse_objc_type(bv, "Class")
     for sym_name in ("__NSConcreteGlobalBlock", "__NSConcreteStackBlock"):
         for sym_type in (binja.SymbolType.ExternalSymbol, binja.SymbolType.DataSymbol):
-            sym = bv.get_symbol_of_type(sym_name, sym_type)
+            sym = bv.x_get_symbol_of_type(sym_name, sym_type)
             if sym is None or sym.address == 0:
                 continue
-            bv.make_data_var(sym.address, objc_class_type)
+            bv.x_make_data_var(sym.address, objc_class_type)
             break
 
 
@@ -275,12 +275,12 @@ def _blocks_plugin_logger(self):
     Monkey-patching this in to avoid having to pass around
     a separate logger with the same lifetime as the view.
     """
-    logger = getattr(self, '_blocks_plugin_logger', None)
+    logger = getattr(self, '_x_blocks_plugin_logger', None)
     if logger is None:
         logger = self.create_logger(_LOGGER_NAME)
-        self._blocks_plugin_logger = logger
+        self._x_blocks_plugin_logger = logger
     return logger
-binja.BinaryView.blocks_plugin_logger = property(_blocks_plugin_logger)
+binja.BinaryView.x_blocks_plugin_logger = property(_blocks_plugin_logger)
 
 
 class Layout:
@@ -346,7 +346,7 @@ class Layout:
                 elif opcode == BCK_WEAK:
                     fields.append(Layout.Field("weak_ptr_", id_type, oparg))
                 else:
-                    bv.blocks_plugin_logger.log_warn(f"Unknown out-of-line generic helper op {op:#04x}")
+                    bv.x_blocks_plugin_logger.log_warn(f"Unknown out-of-line generic helper op {op:#04x}")
                     break
 
         return cls(fields)
@@ -395,7 +395,7 @@ class Layout:
                     elif opcode == BLOCK_LAYOUT_UNRETAINED:
                         fields.append(Layout.Field("unretained_ptr_", id_type, oparg))
                     else:
-                        bv.blocks_plugin_logger.log_warn(f"Unknown out-of-line extended layout op {op:#04x}")
+                        bv.x_blocks_plugin_logger.log_warn(f"Unknown out-of-line extended layout op {op:#04x}")
                         break
 
         return cls(fields)
@@ -450,10 +450,10 @@ def append_layout_fields(bv, struct,
     generic_helper_layout = Layout.from_generic_helper_info(bv, generic_helper_type, generic_helper_info, generic_helper_info_bytecode)
     layout_layout = Layout.from_layout(bv, block_has_extended_layout, layout, layout_bytecode)
     if generic_helper_layout.prefer_over(layout_layout):
-        bv.blocks_plugin_logger.log_debug("Preferring generic helper info over layout")
+        bv.x_blocks_plugin_logger.log_debug("Preferring generic helper info over layout")
         chosen_layout = generic_helper_layout
     else:
-        bv.blocks_plugin_logger.log_debug("Preferring layout over generic helper info")
+        bv.x_blocks_plugin_logger.log_debug("Preferring layout over generic helper info")
         chosen_layout = layout_layout
     byref_indexes_ = chosen_layout.append_fields(struct)
     if byref_indexes is not None:
@@ -511,7 +511,7 @@ class BlockLiteral:
         is_stack_block = True
         bl_var.type = _parse_libclosure_type(bv, "struct Block_literal")
 
-        bl_insn = bv.reload_hlil_instruction(bl_insn,
+        bl_insn = bv.x_reload_hlil_instruction(bl_insn,
                 lambda insn: \
                         isinstance(insn, binja.HighLevelILAssign) and \
                         isinstance(insn.dest, binja.HighLevelILStructField) and \
@@ -632,13 +632,13 @@ class BlockLiteral:
                 # Unfortunately, this seems to be a hypothetical situation
                 # right now, as Binja does not seem to handle different use of
                 # the same stack area by different branches gracefully.
-                self._bv.blocks_plugin_logger.log_warn(f"Block literal at {self.address:x}: Stack var {stack_var.name} already annotated with type {stack_var_type_name}; defined {self.struct_type_name} but did not clobber var type, splitting the stack var might help")
+                self._bv.x_blocks_plugin_logger.log_warn(f"Block literal at {self.address:x}: Stack var {stack_var.name} already annotated with type {stack_var_type_name}; defined {self.struct_type_name} but did not clobber var type, splitting the stack var might help")
                 return
 
             if not stack_var.name.startswith("stack_block_"):
                 stack_var.name = f"stack_block_{stack_var.name}"
             stack_var.type = self.struct_type_name
-            self.insn = self._bv.reload_hlil_instruction(self.insn,
+            self.insn = self._bv.x_reload_hlil_instruction(self.insn,
                     lambda insn: \
                             isinstance(insn, binja.HighLevelILAssign) and \
                             isinstance(insn.dest, binja.HighLevelILStructField) and \
@@ -685,7 +685,7 @@ class BlockLiteral:
                     types[1] = binja.Type.pointer(self._bv.arch, self.struct_type)
                     func_type = binja.Type.function(types[0], types[1:])
                 except NotImplementedError as e:
-                    self._bv.blocks_plugin_logger.log_error(f"Failed to parse ObjC type encoding {bd.signature_raw!r}: {type(e).__name__}: {e}")
+                    self._bv.x_blocks_plugin_logger.log_error(f"Failed to parse ObjC type encoding {bd.signature_raw!r}: {type(e).__name__}: {e}")
                     func_type = None
             else:
                 # No signature string.
@@ -845,7 +845,7 @@ class BlockDescriptor:
                     raise BlockDescriptor.NotABlockDescriptorError(f"Block descriptor at {self.address:x}: layout field does not exist")
                 if self.layout >= 0x1000:
                     # out-of-line layout string
-                    self.layout_bytecode = self._bv.get_raw_string_at(self.layout)
+                    self.layout_bytecode = self._bv.x_get_byte_string_at(self.layout)
                     if self.layout_bytecode is None:
                         raise BlockDescriptor.NotABlockDescriptorError(f"Block descriptor at {self.address:x}: out-of-line layout string does not exist")
                 else:
@@ -869,7 +869,7 @@ class BlockDescriptor:
             if self.generic_helper_type == BLOCK_GENERIC_HELPER_OUTOFLINE:
                 assert self.generic_helper_info != 0
                 # min_len=1 to include the reserved byte in bytecode even if it's 0.
-                self.generic_helper_info_bytecode = self._bv.get_raw_string_at(self.generic_helper_info, min_len=1)
+                self.generic_helper_info_bytecode = self._bv.x_get_byte_string_at(self.generic_helper_info, min_len=1)
                 if self.generic_helper_info_bytecode is None:
                     raise BlockDescriptor.NotABlockDescriptorError(f"Block descriptor at {self.address:x}: out-of-line generic helper info string does not exist")
             else:
@@ -949,9 +949,9 @@ class BlockDescriptor:
         self.struct_type_name = f"struct {self.struct_name}"
         self.struct_type = self._bv.parse_type_string(self.struct_type_name)[0]
         assert self.struct_type is not None
-        self._bv.make_data_var(self.address,
-                               self.struct_type,
-                               f"block_descriptor_{self.address:x}")
+        self._bv.x_make_data_var(self.address,
+                                 self.struct_type,
+                                 f"block_descriptor_{self.address:x}")
 
         # propagate struct type to descriptor pointer on block literal
         pointer_index = bl.struct_builder.index_by_name("descriptor")
@@ -966,9 +966,9 @@ class BlockDescriptor:
                 generic_helper_info_type = self._bv.parse_type_string("uint64_t")[0]
             else:
                 generic_helper_info_type = self._bv.parse_type_string("uint8_t const *")[0]
-            self._bv.make_data_var(self.address - self._bv.arch.address_size,
-                                   generic_helper_info_type,
-                                   f"block_descriptor_{self.address:x}_generic_helper_info")
+            self._bv.x_make_data_var(self.address - self._bv.arch.address_size,
+                                     generic_helper_info_type,
+                                     f"block_descriptor_{self.address:x}_generic_helper_info")
 
     def annotate_layout_bytecode(self):
         """
@@ -976,9 +976,9 @@ class BlockDescriptor:
         """
         if self.block_has_signature and self.block_has_extended_layout and self.layout >= 0x1000:
             n = len(self.layout_bytecode)
-            self._bv.make_data_var(self.layout,
-                                   self._bv.parse_type_string(f"uint8_t [{n}]")[0],
-                                   f"block_layout_{self.layout:x}")
+            self._bv.x_make_data_var(self.layout,
+                                     self._bv.parse_type_string(f"uint8_t [{n}]")[0],
+                                     f"block_layout_{self.layout:x}")
 
     def annotate_generic_helper_info_bytecode(self):
         """
@@ -986,29 +986,29 @@ class BlockDescriptor:
         """
         if self.generic_helper_type == BLOCK_GENERIC_HELPER_OUTOFLINE:
             n = len(self.generic_helper_info_bytecode)
-            self._bv.make_data_var(self.generic_helper_info,
-                                   self._bv.parse_type_string(f"uint8_t [{n}]")[0],
-                                   f"block_generic_helper_info_{self.generic_helper_info:x}")
+            self._bv.x_make_data_var(self.generic_helper_info,
+                                     self._bv.parse_type_string(f"uint8_t [{n}]")[0],
+                                     f"block_generic_helper_info_{self.generic_helper_info:x}")
 
 
 def annotate_global_block_literal(bv, block_literal_addr, sym_addrs=None):
     where = f"Global block {block_literal_addr:x}"
 
-    bv.blocks_plugin_logger.log_info(f"Annotating {where}")
+    bv.x_blocks_plugin_logger.log_info(f"Annotating {where}")
 
     if sym_addrs is None:
-        sym_addrs = bv.get_symbol_addresses_set("__NSConcreteGlobalBlock")
+        sym_addrs = bv.x_get_symbol_addresses_set("__NSConcreteGlobalBlock")
         if len(sym_addrs) == 0:
-            bv.blocks_plugin_logger.log_info("__NSConcreteGlobalBlock not found, target does not appear to contain any global blocks")
+            bv.x_blocks_plugin_logger.log_info("__NSConcreteGlobalBlock not found, target does not appear to contain any global blocks")
             return
 
     sects = bv.get_sections_at(block_literal_addr)
     if sects is None or len(sects) == 0:
-        bv.blocks_plugin_logger.log_warn(f"{where}: Address is not in a section")
+        bv.x_blocks_plugin_logger.log_warn(f"{where}: Address is not in a section")
         return
     if any([sect.name in ('libsystem_blocks.dylib::__objc_classlist',
                           'libsystem_blocks.dylib::__objc_nlclslist') for sect in sects]):
-        bv.blocks_plugin_logger.log_info(f"{where}: Address is in an exempted section that does not contain global blocks")
+        bv.x_blocks_plugin_logger.log_info(f"{where}: Address is in an exempted section that does not contain global blocks")
         return
 
     block_literal_data_var = bv.get_data_var_at(block_literal_addr)
@@ -1025,58 +1025,58 @@ def annotate_global_block_literal(bv, block_literal_addr, sym_addrs=None):
     if isinstance(data_var_value, dict) and 'isa' in data_var_value:
         data_var_value = data_var_value['isa']
     if not isinstance(data_var_value, int):
-        bv.blocks_plugin_logger.log_error(f"{where}: Data var has value {data_var_value} of type {type(data_var_value).__name__}, expected int, fix plugin")
+        bv.x_blocks_plugin_logger.log_error(f"{where}: Data var has value {data_var_value} of type {type(data_var_value).__name__}, expected int, fix plugin")
         return
     if data_var_value not in sym_addrs:
-        bv.blocks_plugin_logger.log_warn(f"{where}: Data var has value {data_var_value:x} instead of __NSConcreteGlobalBlock")
+        bv.x_blocks_plugin_logger.log_warn(f"{where}: Data var has value {data_var_value:x} instead of __NSConcreteGlobalBlock")
         return
 
     try:
         bl = BlockLiteral.from_data(bv, block_literal_data_var, sym_addrs)
-        bv.blocks_plugin_logger.log_info(str(bl))
+        bv.x_blocks_plugin_logger.log_info(str(bl))
         bd = BlockDescriptor(bv, bl.descriptor, bl.flags)
-        bv.blocks_plugin_logger.log_info(str(bd))
+        bv.x_blocks_plugin_logger.log_info(str(bd))
         bl.annotate_literal(bd)
         bd.annotate_descriptor(bl)
         bd.annotate_layout_bytecode()
         bd.annotate_generic_helper_info_bytecode()
         bl.annotate_functions(bd)
     except BlockLiteral.NotABlockLiteralError as e:
-        bv.blocks_plugin_logger.log_warn(f"{where}: Not a block literal: {e}")
+        bv.x_blocks_plugin_logger.log_warn(f"{where}: Not a block literal: {e}")
         return
     except BlockLiteral.FailedToFindFieldsError as e:
-        bv.blocks_plugin_logger.log_warn(f"{where}: Failed to find fields: {e}")
+        bv.x_blocks_plugin_logger.log_warn(f"{where}: Failed to find fields: {e}")
         return
     except BlockDescriptor.NotABlockDescriptorError as e:
-        bv.blocks_plugin_logger.log_warn(f"{where}: Not a block descriptor: {e}")
+        bv.x_blocks_plugin_logger.log_warn(f"{where}: Not a block descriptor: {e}")
         return
     except Exception as e:
-        bv.blocks_plugin_logger.log_error(f"{where}: {type(e).__name__}: {e}\n{traceback.format_exc()}")
+        bv.x_blocks_plugin_logger.log_error(f"{where}: {type(e).__name__}: {e}\n{traceback.format_exc()}")
         return
 
 
 def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
     where = f"Stack block {block_literal_insn.address:x}"
 
-    bv.blocks_plugin_logger.log_info(f"Annotating {where}")
+    bv.x_blocks_plugin_logger.log_info(f"Annotating {where}")
 
     if sym_addrs is None:
-        sym_addrs = bv.get_symbol_addresses_set("__NSConcreteStackBlock")
+        sym_addrs = bv.x_get_symbol_addresses_set("__NSConcreteStackBlock")
         if len(sym_addrs) == 0:
-            bv.blocks_plugin_logger.log_info("__NSConcreteStackBlock not found, target does not appear to contain any stack blocks")
+            bv.x_blocks_plugin_logger.log_info("__NSConcreteStackBlock not found, target does not appear to contain any stack blocks")
             return
 
     sects = bv.get_sections_at(block_literal_insn.address)
     if sects is None or len(sects) == 0:
-        bv.blocks_plugin_logger.log_warn(f"{where}: Address is not in a section")
+        bv.x_blocks_plugin_logger.log_warn(f"{where}: Address is not in a section")
         return
     if any([sect.name in ('__auth_got',
                           '__got') for sect in sects]):
-        bv.blocks_plugin_logger.log_info(f"{where}: Address is in an exempted section that does not contain stack blocks")
+        bv.x_blocks_plugin_logger.log_info(f"{where}: Address is in an exempted section that does not contain stack blocks")
         return
 
     if len(bv.get_functions_containing(block_literal_insn.address)) == 0:
-        bv.blocks_plugin_logger.log_warn(f"{where}: Address is not in any functions")
+        bv.x_blocks_plugin_logger.log_warn(f"{where}: Address is not in any functions")
         return
 
     if isinstance(block_literal_insn, binja.HighLevelILVarInit):
@@ -1097,45 +1097,45 @@ def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
         elif isinstance(block_literal_insn.dest, binja.HighLevelILVar):
             block_literal_var = block_literal_insn.dest.var
         else:
-            bv.blocks_plugin_logger.log_error(f"{where}: Assignment is not to a var or to a struct field")
+            bv.x_blocks_plugin_logger.log_error(f"{where}: Assignment is not to a var or to a struct field")
             return
         isa_src = block_literal_insn.src
     else:
-        bv.blocks_plugin_logger.log_error(f"{where}: Instruction is neither a var init nor an assign")
+        bv.x_blocks_plugin_logger.log_error(f"{where}: Instruction is neither a var init nor an assign")
         return
 
     if block_literal_var.source_type != binja.VariableSourceType.StackVariableSourceType:
-        bv.blocks_plugin_logger.log_warn(f"{where}: Assignment is not to a stack variable (var source_type is {block_literal_var.source_type!r})")
+        bv.x_blocks_plugin_logger.log_warn(f"{where}: Assignment is not to a stack variable (var source_type is {block_literal_var.source_type!r})")
         return
 
     if not ((isinstance(isa_src, binja.HighLevelILImport) and \
                 (isa_src.constant in sym_addrs)) or \
             (isinstance(isa_src, binja.HighLevelILConstPtr) and \
                 (isa_src.constant in sym_addrs))):
-        bv.blocks_plugin_logger.log_warn(f"{where}: RHS is not __NSConcreteStackBlock")
+        bv.x_blocks_plugin_logger.log_warn(f"{where}: RHS is not __NSConcreteStackBlock")
         return
 
     try:
         bl = BlockLiteral.from_stack(bv, block_literal_insn, block_literal_var, sym_addrs)
-        bv.blocks_plugin_logger.log_info(str(bl))
+        bv.x_blocks_plugin_logger.log_info(str(bl))
         bd = BlockDescriptor(bv, bl.descriptor, bl.flags)
-        bv.blocks_plugin_logger.log_info(str(bd))
+        bv.x_blocks_plugin_logger.log_info(str(bd))
         bl.annotate_literal(bd)
         bd.annotate_descriptor(bl)
         bd.annotate_layout_bytecode()
         bd.annotate_generic_helper_info_bytecode()
         bl.annotate_functions(bd)
     except BlockLiteral.NotABlockLiteralError as e:
-        bv.blocks_plugin_logger.log_warn(f"{where}: Not a block literal: {e}")
+        bv.x_blocks_plugin_logger.log_warn(f"{where}: Not a block literal: {e}")
         return
     except BlockLiteral.FailedToFindFieldsError as e:
-        bv.blocks_plugin_logger.log_warn(f"{where}: Failed to find fields: {e}")
+        bv.x_blocks_plugin_logger.log_warn(f"{where}: Failed to find fields: {e}")
         return
     except BlockDescriptor.NotABlockDescriptorError as e:
-        bv.blocks_plugin_logger.log_warn(f"{where}: Not a block descriptor: {e}")
+        bv.x_blocks_plugin_logger.log_warn(f"{where}: Not a block descriptor: {e}")
         return
     except Exception as e:
-        bv.blocks_plugin_logger.log_error(f"{where}: {type(e).__name__}: {e}\n{traceback.format_exc()}")
+        bv.x_blocks_plugin_logger.log_error(f"{where}: {type(e).__name__}: {e}\n{traceback.format_exc()}")
         return
 
     # XXX refactor byref handling
@@ -1162,18 +1162,18 @@ def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
             if len(byref_srcs_set) != len(byref_indexes_set):
                 missing_indexes_set = byref_indexes_set - byref_srcs_set
                 missing_indexes_str = ', '.join([str(idx) for idx in sorted(missing_indexes_set)])
-                bv.blocks_plugin_logger.log_warn(f"{where}: Failed to find byref for struct member indexes {missing_indexes_str}, review manually")
+                bv.x_blocks_plugin_logger.log_warn(f"{where}: Failed to find byref for struct member indexes {missing_indexes_str}, review manually")
 
             # process byref_srcs
             for byref_src, byref_member_index in byref_srcs:
                 if byref_src is None:
-                    bv.blocks_plugin_logger.log_warn(f"{where}: Byref for struct member index {byref_member_index} is not an AddressOf, review manually")
+                    bv.x_blocks_plugin_logger.log_warn(f"{where}: Byref for struct member index {byref_member_index} is not an AddressOf, review manually")
                     continue
                 assert isinstance(byref_src, binja.HighLevelILAddressOf)
                 if isinstance(byref_src.src, binja.HighLevelILVar):
                     var_id = byref_src.src.var.identifier
                 else:
-                    bv.blocks_plugin_logger.log_warn(f"{where}: Byref for struct member index {byref_member_index} and src {byref_src} is {type(byref_src.src).__name__}, review manually")
+                    bv.x_blocks_plugin_logger.log_warn(f"{where}: Byref for struct member index {byref_member_index} and src {byref_src} is {type(byref_src.src).__name__}, review manually")
                     continue
 
                 byref_insn = None
@@ -1193,7 +1193,7 @@ def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
                         break
 
                 else:
-                    bv.blocks_plugin_logger.log_warn(f"{where}: Byref src var {byref_src} id {var_id:x} not found in function's var declarations and inits")
+                    bv.x_blocks_plugin_logger.log_warn(f"{where}: Byref src var {byref_src} id {var_id:x} not found in function's var declarations and inits")
                     continue
 
                 # So apparently this works; despite the reloads, byref_srcs are not invalidated, identifiers are still current.
@@ -1209,7 +1209,7 @@ def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
                 byref_struct.append(bv.parse_type_string("uint32_t size")[0], "size")
 
                 byref_insn_var.type = byref_struct
-                byref_insn = bv.reload_hlil_instruction(byref_insn,
+                byref_insn = bv.x_reload_hlil_instruction(byref_insn,
                         lambda insn: \
                                 isinstance(insn, binja.HighLevelILVarDeclare) and \
                                 str(insn.var.type).startswith('struct'))
@@ -1230,13 +1230,13 @@ def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
                                                  binja.HighLevelILConstPtr)):
                             byref_size = insn.src.constant
                 try:
-                    bv.blocks_plugin_logger.log_info(f"Block byref at {byref_insn.address:x} flags {byref_flags:08x} size {byref_size:#x}")
+                    bv.x_blocks_plugin_logger.log_info(f"Block byref at {byref_insn.address:x} flags {byref_flags:08x} size {byref_size:#x}")
                 except UnboundLocalError as e:
-                    bv.blocks_plugin_logger.log_warn(f"Block byref at {byref_insn.address:x}: Failed to find flags or size assignments")
+                    bv.x_blocks_plugin_logger.log_warn(f"Block byref at {byref_insn.address:x}: Failed to find flags or size assignments")
                     continue
 
                 if byref_size > 0x1000:
-                    bv.blocks_plugin_logger.log_warn(f"Block byref at {byref_insn.address:x}: Implausible size {byref_size:#x}")
+                    bv.x_blocks_plugin_logger.log_warn(f"Block byref at {byref_insn.address:x}: Implausible size {byref_size:#x}")
                     continue
 
                 byref_struct.width = byref_size
@@ -1249,7 +1249,7 @@ def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
                     byref_struct.append(bv.parse_type_string("void *layout")[0], "layout")
                     layout_index = byref_struct.index_by_name("layout")
                     byref_insn_var.type = byref_struct
-                    byref_insn = bv.reload_hlil_instruction(byref_insn,
+                    byref_insn = bv.x_reload_hlil_instruction(byref_insn,
                             lambda insn: \
                                     isinstance(insn, binja.HighLevelILVarDeclare) and \
                                     str(insn.var.type).startswith('struct'))
@@ -1262,7 +1262,7 @@ def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
                                 byref_layout = insn.src.constant
                                 break
                     else:
-                        bv.blocks_plugin_logger.log_warn(f"Block byref at {byref_insn.address:x}: Failed to find layout assignment")
+                        bv.x_blocks_plugin_logger.log_warn(f"Block byref at {byref_insn.address:x}: Failed to find layout assignment")
                     if byref_layout is not None and byref_layout != 0:
                         if byref_layout < 0x1000:
                             # inline layout encoding
@@ -1270,7 +1270,7 @@ def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
                             byref_struct.replace(layout_index, bv.parse_type_string("uint64_t layout")[0], "layout")
                         else:
                             # out-of-line layout string
-                            byref_layout_bytecode = bv.get_raw_string_at(byref_layout)
+                            byref_layout_bytecode = bv.x_get_byte_string_at(byref_layout)
                             byref_struct.replace(layout_index, bv.parse_type_string("uint8_t const *layout")[0], "layout")
                     else:
                         byref_layout_bytecode = None
@@ -1298,7 +1298,7 @@ def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
                 byref_struct_type = bv.parse_type_string(byref_struct_type_name)[0]
 
                 byref_insn_var.type = byref_struct_type
-                byref_insn = bv.reload_hlil_instruction(byref_insn,
+                byref_insn = bv.x_reload_hlil_instruction(byref_insn,
                         lambda insn: \
                                 isinstance(insn, binja.HighLevelILVarDeclare) and \
                                 str(insn.var.type).startswith('struct'))
@@ -1327,9 +1327,9 @@ def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
                                                      binja.HighLevelILConstPtr)):
                                 byref_destroy = insn.src.constant
                     if byref_keep is None:
-                        bv.blocks_plugin_logger.log_warn(f"Block byref at {byref_insn.address:x}: Failed to find keep assignment")
+                        bv.x_blocks_plugin_logger.log_warn(f"Block byref at {byref_insn.address:x}: Failed to find keep assignment")
                     if byref_destroy is None:
-                        bv.blocks_plugin_logger.log_warn(f"Block byref at {byref_insn.address:x}: Failed to find destroy assignment")
+                        bv.x_blocks_plugin_logger.log_warn(f"Block byref at {byref_insn.address:x}: Failed to find destroy assignment")
                     if byref_keep is None and byref_destroy is None:
                         continue
 
@@ -1372,14 +1372,14 @@ def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
 
 
     except Exception as e:
-        bv.blocks_plugin_logger.log_error(f"{where}: {type(e).__name__}: {e}\n{traceback.format_exc()}")
+        bv.x_blocks_plugin_logger.log_error(f"{where}: {type(e).__name__}: {e}\n{traceback.format_exc()}")
         return
 
 
 def annotate_all_global_blocks(bv, set_progress=None):
-    sym_addrs = bv.get_symbol_addresses_set("__NSConcreteGlobalBlock")
+    sym_addrs = bv.x_get_symbol_addresses_set("__NSConcreteGlobalBlock")
     if len(sym_addrs) == 0:
-        bv.blocks_plugin_logger.log_info("__NSConcreteGlobalBlock not found, target does not appear to contain any global blocks")
+        bv.x_blocks_plugin_logger.log_info("__NSConcreteGlobalBlock not found, target does not appear to contain any global blocks")
         return
 
     for sym_addr in sym_addrs:
@@ -1390,9 +1390,9 @@ def annotate_all_global_blocks(bv, set_progress=None):
 
 
 def annotate_all_stack_blocks(bv, set_progress=None):
-    sym_addrs = bv.get_symbol_addresses_set("__NSConcreteStackBlock")
+    sym_addrs = bv.x_get_symbol_addresses_set("__NSConcreteStackBlock")
     if len(sym_addrs) == 0:
-        bv.blocks_plugin_logger.log_info("__NSConcreteStackBlock not found, target does not appear to contain any stack blocks")
+        bv.x_blocks_plugin_logger.log_info("__NSConcreteStackBlock not found, target does not appear to contain any stack blocks")
         return
 
     # We'd want to use get_code_refs here, but it is very unreliable.
