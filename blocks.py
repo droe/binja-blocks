@@ -301,6 +301,11 @@ class Layout:
 
     @classmethod
     def from_generic_helper_info(cls, bv, generic_helper_type, generic_helper_info, generic_helper_info_bytecode):
+        """
+        Always returns a layout instance, which may be empty if there is no
+        generic helper info available (generic_helper_type ==
+        BLOCK_GENERIC_HELPER_NONE).
+        """
         id_type = _parse_objc_type(bv, "id")
 
         fields = []
@@ -353,11 +358,15 @@ class Layout:
 
     @classmethod
     def from_layout(cls, bv, block_has_extended_layout, layout, layout_bytecode):
+        """
+        Always returns a layout instance, which may be empty if there is no
+        layout information available (layout is None).
+        """
         id_type = _parse_objc_type(bv, "id")
 
         fields = []
 
-        if block_has_extended_layout and layout != 0:
+        if layout is not None and block_has_extended_layout and layout != 0:
             if layout < 0x1000:
                 # inline layout encoding
                 assert layout_bytecode is None
@@ -412,6 +421,10 @@ class Layout:
         return sum([f.count * f.field_type.width for f in self._fields])
 
     def prefer_over(self, other):
+        """
+        Prefer more byrefs.
+        If tied then prefer more bytes covered by fields.
+        """
         if self.byref_count < other.byref_count:
             return False
         if self.bytes_count < other.bytes_count:
@@ -426,38 +439,6 @@ class Layout:
             for _ in range(field.count):
                 struct.append_with_offset_suffix(field.field_type, field.name_prefix)
         return byref_indexes
-
-
-def append_layout_fields(bv, struct,
-                         generic_helper_type, generic_helper_info, generic_helper_info_bytecode,
-                         block_has_extended_layout, layout, layout_bytecode,
-                         byref_indexes=None):
-    """
-    Append fields for imported variables to struct, which is either
-    a block literal struct or a byref struct.
-
-    If only generic helper info is available, derive the field layout
-    from generic_helper_info and generic_helper_info_bytecode.
-    Otherwise, if only layout is available, derive the field layout
-    from layout and layout_bytecode.
-    If neither are available, do not append any fields to struct.
-    If both are available, chose the better layout:  More byrefs wins,
-    if tied then more bytes covered by fields wins.
-
-    If byref_indexes is given, the struct member index of all byref
-    pointers is appended to byref_indexes.
-    """
-    generic_helper_layout = Layout.from_generic_helper_info(bv, generic_helper_type, generic_helper_info, generic_helper_info_bytecode)
-    layout_layout = Layout.from_layout(bv, block_has_extended_layout, layout, layout_bytecode)
-    if generic_helper_layout.prefer_over(layout_layout):
-        bv.x_blocks_plugin_logger.log_debug("Preferring generic helper info over layout")
-        chosen_layout = generic_helper_layout
-    else:
-        bv.x_blocks_plugin_logger.log_debug("Preferring layout over generic helper info")
-        chosen_layout = layout_layout
-    byref_indexes_ = chosen_layout.append_fields(struct)
-    if byref_indexes is not None:
-        byref_indexes.extend(byref_indexes_)
 
 
 class BlockLiteral:
@@ -607,12 +588,18 @@ class BlockLiteral:
         struct.append(self._bv.x_parse_type("uint32_t"), "reserved")
         struct.append(_get_libclosure_type(self._bv, "BlockInvokeFunction"), "invoke")
         struct.append(binja.Type.pointer(self._bv.arch, _parse_libclosure_type(self._bv, "struct Block_descriptor_1")), "descriptor") # placeholder
-        self.byref_indexes = []
-        if bd.imported_variables_size > 0 and bd.block_has_signature and bd.layout is not None:
-            append_layout_fields(self._bv, struct,
-                                 bd.generic_helper_type, bd.generic_helper_info, bd.generic_helper_info_bytecode,
-                                 bd.block_has_extended_layout, bd.layout, bd.layout_bytecode,
-                                 self.byref_indexes)
+        if bd.imported_variables_size > 0:
+            generic_helper_layout = Layout.from_generic_helper_info(self._bv, bd.generic_helper_type, bd.generic_helper_info, bd.generic_helper_info_bytecode)
+            layout_layout = Layout.from_layout(self._bv, bd.block_has_extended_layout, bd.layout, bd.layout_bytecode)
+            if generic_helper_layout.prefer_over(layout_layout):
+                self._bv.x_blocks_plugin_logger.log_debug("Preferring generic helper info over layout")
+                chosen_layout = generic_helper_layout
+            else:
+                self._bv.x_blocks_plugin_logger.log_debug("Preferring layout over generic helper info")
+                chosen_layout = layout_layout
+            self.byref_indexes = chosen_layout.append_fields(struct)
+        else:
+            self.byref_indexes = []
         self.struct_builder = struct
         self.struct_name = f"Block_literal_{self.address:x}"
         self._bv.define_type(binja.Type.generate_auto_type_id(_TYPE_ID_SOURCE, self.struct_name), self.struct_name, self.struct_builder)
@@ -1274,9 +1261,8 @@ def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
                             byref_struct.replace(layout_index, bv.x_parse_type("uint8_t const *"), "layout")
                     else:
                         byref_layout_bytecode = None
-                    append_layout_fields(bv, byref_struct,
-                                         BLOCK_GENERIC_HELPER_NONE, None, None,
-                                         byref_layout is not None, byref_layout, byref_layout_bytecode)
+                    byref_layout_layout = Layout.from_layout(bv, True, byref_layout, byref_layout_bytecode)
+                    byref_layout_layout.append_fields(byref_struct)
                 elif byref_layout_nibble == BLOCK_BYREF_LAYOUT_NON_OBJECT:
                     byref_struct.append_with_offset_suffix(bv.x_parse_type("uint64_t"), "non_object_")
                 elif byref_layout_nibble == BLOCK_BYREF_LAYOUT_STRONG:
