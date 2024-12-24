@@ -194,7 +194,7 @@ def _get_custom_type_internal(bv, name, typestr, source, dependency=None):
             return bv.get_type_by_name(name)
         else:
             try:
-                return bv.parse_type_string(typestr)[0]
+                return bv.x_parse_type(typestr)
             except SyntaxError:
                 return None
 
@@ -334,9 +334,9 @@ class Layout:
                 if opcode == BCK_DONE:
                     break
                 elif opcode == BCK_NON_OBJECT_BYTES:
-                    fields.append(Layout.Field("non_object_", bv.parse_type_string(f"uint8_t [{oparg}]")[0]))
+                    fields.append(Layout.Field("non_object_", bv.x_parse_type(f"uint8_t [{oparg}]")))
                 elif opcode == BCK_NON_OBJECT_WORDS:
-                    fields.append(Layout.Field("non_object_", bv.parse_type_string("uint64_t")[0], oparg))
+                    fields.append(Layout.Field("non_object_", bv.x_parse_type("uint64_t"), oparg))
                 elif opcode == BCK_STRONG:
                     fields.append(Layout.Field("strong_ptr_", id_type, oparg))
                 elif opcode == BCK_BLOCK:
@@ -383,9 +383,9 @@ class Layout:
                     if opcode == BLOCK_LAYOUT_ESCAPE:
                         break
                     elif opcode == BLOCK_LAYOUT_NON_OBJECT_BYTES:
-                        fields.append(Layout.Field("non_object_", bv.parse_type_string(f"uint8_t [{oparg}]")[0]))
+                        fields.append(Layout.Field("non_object_", bv.x_parse_type(f"uint8_t [{oparg}]")))
                     elif opcode == BLOCK_LAYOUT_NON_OBJECT_WORDS:
-                        fields.append(Layout.Field("non_object_", bv.parse_type_string("uint64_t")[0], oparg))
+                        fields.append(Layout.Field("non_object_", bv.x_parse_type("uint64_t"), oparg))
                     elif opcode == BLOCK_LAYOUT_STRONG:
                         fields.append(Layout.Field("strong_ptr_", id_type, oparg))
                     elif opcode == BLOCK_LAYOUT_BYREF:
@@ -604,7 +604,7 @@ class BlockLiteral:
         struct = binja.StructureBuilder.create(packed=True, width=bd.size)
         struct.append(_parse_objc_type(self._bv, "Class"), "isa")
         struct.append(_parse_libclosure_type(self._bv, "enum Block_flags"), "flags")
-        struct.append(self._bv.parse_type_string("uint32_t reserved")[0], "reserved")
+        struct.append(self._bv.x_parse_type("uint32_t"), "reserved")
         struct.append(_get_libclosure_type(self._bv, "BlockInvokeFunction"), "invoke")
         struct.append(binja.Type.pointer(self._bv.arch, _parse_libclosure_type(self._bv, "struct Block_descriptor_1")), "descriptor") # placeholder
         self.byref_indexes = []
@@ -617,7 +617,7 @@ class BlockLiteral:
         self.struct_name = f"Block_literal_{self.address:x}"
         self._bv.define_type(binja.Type.generate_auto_type_id(_TYPE_ID_SOURCE, self.struct_name), self.struct_name, self.struct_builder)
         self.struct_type_name = f"struct {self.struct_name}"
-        self.struct_type = self._bv.parse_type_string(self.struct_type_name)[0]
+        self.struct_type = self._bv.x_parse_type(self.struct_type_name)
         assert self.struct_type is not None
         if self.is_stack_block:
             assert isinstance(self.insn, binja.HighLevelILAssign)
@@ -657,10 +657,10 @@ class BlockLiteral:
         else:
             fallback = 'void'
         try:
-            return self._bv.parse_type_string(ctype)[0]
+            return self._bv.x_parse_type(ctype)
         except SyntaxError:
             # XXX if struct or union and we have member type info, create struct or union and retry
-            return self._bv.parse_type_string(fallback)[0]
+            return self._bv.x_parse_type(fallback)
 
     def annotate_functions(self, bd):
         """
@@ -729,7 +729,7 @@ class BlockLiteral:
                                             binja.Type.pointer(self._bv.arch, func_type), "invoke")
                 self._bv.define_type(binja.Type.generate_auto_type_id(_TYPE_ID_SOURCE, self.struct_name),
                                      self.struct_name, self.struct_builder)
-                self.struct_type = self._bv.parse_type_string(self.struct_type_name)[0]
+                self.struct_type = self._bv.x_parse_type(self.struct_type_name)
 
             if invoke_func.name == f"sub_{invoke_func.start:x}":
                 invoke_func.name = f"sub_{invoke_func.start:x}_block_invoke"
@@ -921,25 +921,25 @@ class BlockDescriptor:
         """
         struct = binja.StructureBuilder.create()
         if self.reserved == 0:
-            struct.append(self._bv.parse_type_string("uint64_t reserved")[0], "reserved")
+            struct.append(self._bv.x_parse_type("uint64_t"), "reserved")
         else:
             assert self.in_descriptor_flags is not None
             struct.append(_parse_libclosure_type(self._bv, "enum Block_flags"), "in_descriptor_flags")
-            struct.append(self._bv.parse_type_string("uint32_t reserved")[0], "reserved")
+            struct.append(self._bv.x_parse_type("uint32_t"), "reserved")
         assert struct.width == 8
-        struct.append(self._bv.parse_type_string("uint64_t size")[0], "size")
+        struct.append(self._bv.x_parse_type("uint64_t"), "size")
         if self.block_has_copy_dispose:
             struct.append(_get_libclosure_type(self._bv, "BlockCopyFunction"), "copy")
             struct.append(_get_libclosure_type(self._bv, "BlockDisposeFunction"), "dispose")
         if self.block_has_signature:
-            struct.append(self._bv.parse_type_string("char const *signature")[0], "signature")
+            struct.append(self._bv.x_parse_type("char const *"), "signature")
             if self.layout is not None:
                 if self.layout < 0x1000:
                     # inline layout encoding
-                    struct.append(self._bv.parse_type_string("uint64_t layout")[0], "layout")
+                    struct.append(self._bv.x_parse_type("uint64_t"), "layout")
                 else:
                     # out-of-line layout string
-                    struct.append(self._bv.parse_type_string("uint8_t const *layout")[0], "layout")
+                    struct.append(self._bv.x_parse_type("uint8_t const *"), "layout")
             else:
                 # Skip the layout field, see ctor for rationale.
                 pass
@@ -947,7 +947,7 @@ class BlockDescriptor:
         self.struct_name = f"Block_descriptor_{self.address:x}"
         self._bv.define_type(binja.Type.generate_auto_type_id(_TYPE_ID_SOURCE, self.struct_name), self.struct_name, self.struct_builder)
         self.struct_type_name = f"struct {self.struct_name}"
-        self.struct_type = self._bv.parse_type_string(self.struct_type_name)[0]
+        self.struct_type = self._bv.x_parse_type(self.struct_type_name)
         assert self.struct_type is not None
         self._bv.x_make_data_var(self.address,
                                  self.struct_type,
@@ -957,15 +957,15 @@ class BlockDescriptor:
         pointer_index = bl.struct_builder.index_by_name("descriptor")
         bl.struct_builder.replace(pointer_index, binja.Type.pointer(self._bv.arch, self.struct_type), "descriptor")
         self._bv.define_type(binja.Type.generate_auto_type_id(_TYPE_ID_SOURCE, bl.struct_name), bl.struct_name, bl.struct_builder)
-        bl.struct_type = self._bv.parse_type_string(bl.struct_type_name)[0]
+        bl.struct_type = self._bv.x_parse_type(bl.struct_type_name)
 
         # annotate generic helper info
         if self.generic_helper_type in (BLOCK_GENERIC_HELPER_INLINE,
                                         BLOCK_GENERIC_HELPER_OUTOFLINE):
             if self.generic_helper_type == BLOCK_GENERIC_HELPER_INLINE:
-                generic_helper_info_type = self._bv.parse_type_string("uint64_t")[0]
+                generic_helper_info_type = self._bv.x_parse_type("uint64_t")
             else:
-                generic_helper_info_type = self._bv.parse_type_string("uint8_t const *")[0]
+                generic_helper_info_type = self._bv.x_parse_type("uint8_t const *")
             self._bv.x_make_data_var(self.address - self._bv.arch.address_size,
                                      generic_helper_info_type,
                                      f"block_descriptor_{self.address:x}_generic_helper_info")
@@ -977,7 +977,7 @@ class BlockDescriptor:
         if self.block_has_signature and self.block_has_extended_layout and self.layout >= 0x1000:
             n = len(self.layout_bytecode)
             self._bv.x_make_data_var(self.layout,
-                                     self._bv.parse_type_string(f"uint8_t [{n}]")[0],
+                                     self._bv.x_parse_type(f"uint8_t [{n}]"),
                                      f"block_layout_{self.layout:x}")
 
     def annotate_generic_helper_info_bytecode(self):
@@ -987,7 +987,7 @@ class BlockDescriptor:
         if self.generic_helper_type == BLOCK_GENERIC_HELPER_OUTOFLINE:
             n = len(self.generic_helper_info_bytecode)
             self._bv.x_make_data_var(self.generic_helper_info,
-                                     self._bv.parse_type_string(f"uint8_t [{n}]")[0],
+                                     self._bv.x_parse_type(f"uint8_t [{n}]"),
                                      f"block_generic_helper_info_{self.generic_helper_info:x}")
 
 
@@ -1204,9 +1204,9 @@ def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
 
                 byref_struct = binja.StructureBuilder.create()
                 byref_struct.append(_parse_objc_type(bv, "Class"), "isa")
-                byref_struct.append(bv.parse_type_string("void *forwarding")[0], "forwarding") # placeholder
+                byref_struct.append(bv.x_parse_type("void *"), "forwarding") # placeholder
                 byref_struct.append(_parse_libclosure_type(bv, "enum Block_byref_flags"), "flags")
-                byref_struct.append(bv.parse_type_string("uint32_t size")[0], "size")
+                byref_struct.append(bv.x_parse_type("uint32_t"), "size")
 
                 byref_insn_var.type = byref_struct
                 byref_insn = bv.x_reload_hlil_instruction(byref_insn,
@@ -1246,7 +1246,7 @@ def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
                     byref_struct.append(_get_libclosure_type(bv, "BlockByrefDestroyFunction"), "destroy")
                 byref_layout_nibble = (byref_flags & BLOCK_BYREF_LAYOUT_MASK)
                 if byref_layout_nibble == BLOCK_BYREF_LAYOUT_EXTENDED:
-                    byref_struct.append(bv.parse_type_string("void *layout")[0], "layout")
+                    byref_struct.append(bv.x_parse_type("void *"), "layout")
                     layout_index = byref_struct.index_by_name("layout")
                     byref_insn_var.type = byref_struct
                     byref_insn = bv.x_reload_hlil_instruction(byref_insn,
@@ -1267,18 +1267,18 @@ def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
                         if byref_layout < 0x1000:
                             # inline layout encoding
                             byref_layout_bytecode = None
-                            byref_struct.replace(layout_index, bv.parse_type_string("uint64_t layout")[0], "layout")
+                            byref_struct.replace(layout_index, bv.x_parse_type("uint64_t"), "layout")
                         else:
                             # out-of-line layout string
                             byref_layout_bytecode = bv.x_get_byte_string_at(byref_layout)
-                            byref_struct.replace(layout_index, bv.parse_type_string("uint8_t const *layout")[0], "layout")
+                            byref_struct.replace(layout_index, bv.x_parse_type("uint8_t const *"), "layout")
                     else:
                         byref_layout_bytecode = None
                     append_layout_fields(bv, byref_struct,
                                          BLOCK_GENERIC_HELPER_NONE, None, None,
                                          byref_layout is not None, byref_layout, byref_layout_bytecode)
                 elif byref_layout_nibble == BLOCK_BYREF_LAYOUT_NON_OBJECT:
-                    byref_struct.append_with_offset_suffix(bv.parse_type_string("uint64_t non_object")[0], "non_object_")
+                    byref_struct.append_with_offset_suffix(bv.x_parse_type("uint64_t"), "non_object_")
                 elif byref_layout_nibble == BLOCK_BYREF_LAYOUT_STRONG:
                     byref_struct.append_with_offset_suffix(_parse_objc_type(bv, "id"), "strong_ptr_")
                 elif byref_layout_nibble == BLOCK_BYREF_LAYOUT_WEAK:
@@ -1289,13 +1289,13 @@ def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
                 byref_struct_name = f"Block_byref_{byref_insn.address:x}"
                 bv.define_type(binja.Type.generate_auto_type_id(_TYPE_ID_SOURCE, byref_struct_name), byref_struct_name, byref_struct)
                 byref_struct_type_name = f"struct {byref_struct_name}"
-                byref_struct_type = bv.parse_type_string(byref_struct_type_name)[0]
+                byref_struct_type = bv.x_parse_type(byref_struct_type_name)
                 assert byref_struct_type is not None
 
                 # propagate registered struct to forwarding self pointer
                 byref_struct.replace(1, binja.Type.pointer(bv.arch, byref_struct_type), "forwarding")
                 bv.define_type(binja.Type.generate_auto_type_id(_TYPE_ID_SOURCE, byref_struct_name), byref_struct_name, byref_struct)
-                byref_struct_type = bv.parse_type_string(byref_struct_type_name)[0]
+                byref_struct_type = bv.x_parse_type(byref_struct_type_name)
 
                 byref_insn_var.type = byref_struct_type
                 byref_insn = bv.x_reload_hlil_instruction(byref_insn,
@@ -1309,7 +1309,7 @@ def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
                 assert byref_member_name.startswith("byref_ptr_")
                 bl.struct_builder.replace(byref_member_index, binja.Type.pointer(bv.arch, byref_struct_type), byref_member_name)
                 bv.define_type(binja.Type.generate_auto_type_id(_TYPE_ID_SOURCE, bl.struct_name), bl.struct_name, bl.struct_builder)
-                bl.struct_type = bv.parse_type_string(bl.struct_type_name)[0]
+                bl.struct_type = bv.x_parse_type(bl.struct_type_name)
 
                 # annotate functions
                 if (byref_flags & BLOCK_BYREF_HAS_COPY_DISPOSE) != 0:

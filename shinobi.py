@@ -193,6 +193,16 @@ def _get_symbol_addresses_set(self, name):
 binja.BinaryView.x_get_symbol_addresses_set = _get_symbol_addresses_set
 
 
+def _parse_type(self, type_str):
+    """
+    Like parse_type_string, but returns only the type and discards
+    the name.  Typical use is to only pass a type without a name
+    in type_str.
+    """
+    return self.parse_type_string(type_str)[0]
+binja.BinaryView.x_parse_type = _parse_type
+
+
 def _make_data_var(self, address, type_, name=None):
     """
     Make a data var of given type and name at address.
