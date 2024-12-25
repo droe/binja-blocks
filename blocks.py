@@ -444,10 +444,17 @@ class Layout:
 class GeneratedStruct:
     def __init__(self, bv, builder, name):
         self._bv = bv
-        self.builder = builder
+
         self.name = name
         self.type_id = binja.Type.generate_auto_type_id(_TYPE_ID_SOURCE, self.name)
-        bv.define_type(self.type_id, self.name, self.builder)
+
+        t = self._bv.get_type_by_name(name)
+        if t is not None:
+            self.builder = binja.StructureBuilder.create(t.members, packed=t.packed, width=t.width)
+        else:
+            self.builder = builder
+            bv.define_type(self.type_id, self.name, self.builder)
+
         self.type_name = f"struct {self.name}"
         self.type = bv.x_parse_type(self.type_name)
         assert self.type is not None
@@ -456,7 +463,7 @@ class GeneratedStruct:
     def pointer_to_type(self):
         return binja.Type.pointer(self._bv.arch, self.type)
 
-    def update_member_type(self, member_name_or_index, new_member_type):
+    def update_member_type(self, member_name_or_index, new_member_type, if_type=None):
         if isinstance(member_name_or_index, str):
             member_index = self.builder.index_by_name(member_name_or_index)
             member_name = member_name_or_index
@@ -465,6 +472,9 @@ class GeneratedStruct:
             member_name = self.builder.members[member_index].name
         else:
             raise ValueError(f"member_name_or_index argument is of unexpected type {type(member_name_or_index).__name__}")
+        if if_type is not None:
+            if str(self.builder.members[member_index].type) != if_type:
+                return
         self.builder.replace(member_index, new_member_type, member_name)
         self._bv.define_type(self.type_id, self.name, self.builder)
         self.type = self._bv.x_parse_type(self.type_name)
@@ -610,53 +620,25 @@ class BlockLiteral:
         """
         Annotate the block literal.
         """
-
-        # XXX move building the type into descriptor class
-
-        # Packed because block layout bytecode can lead to misaligned words,
-        # which according to comments in LLVM source code seems intentional.
-        struct = binja.StructureBuilder.create(packed=True, width=bd.size)
-        struct.append(_parse_objc_type(self._bv, "Class"), "isa")
-        struct.append(_parse_libclosure_type(self._bv, "enum Block_flags"), "flags")
-        struct.append(self._bv.x_parse_type("uint32_t"), "reserved")
-        struct.append(_get_libclosure_type(self._bv, "BlockInvokeFunction"), "invoke")
-        struct.append(binja.Type.pointer(self._bv.arch, _parse_libclosure_type(self._bv, "struct Block_descriptor_1")), "descriptor") # placeholder
-        if bd.imported_variables_size > 0:
-            generic_helper_layout = Layout.from_generic_helper_info(self._bv, bd.generic_helper_type, bd.generic_helper_info, bd.generic_helper_info_bytecode)
-            layout_layout = Layout.from_layout(self._bv, bd.block_has_extended_layout, bd.layout, bd.layout_bytecode)
-            if generic_helper_layout.prefer_over(layout_layout):
-                self._bv.x_blocks_plugin_logger.log_debug("Preferring generic helper info over layout")
-                chosen_layout = generic_helper_layout
-            else:
-                self._bv.x_blocks_plugin_logger.log_debug("Preferring layout over generic helper info")
-                chosen_layout = layout_layout
-            self.byref_indexes = chosen_layout.append_fields(struct)
-        else:
-            self.byref_indexes = []
-
-        self.block_literal_struct = GeneratedStruct(self._bv, struct, f"Block_literal_{self.address:x}")
-
-        # XXX annotate with type from descriptor
-
         if self.is_stack_block:
             assert isinstance(self.insn, binja.HighLevelILAssign)
             assert isinstance(self.insn.dest, binja.HighLevelILStructField)
             assert isinstance(self.insn.dest.src, binja.HighLevelILVar)
             stack_var = self.insn.dest.src.var
             stack_var_type_name = str(stack_var.type)
-            if stack_var_type_name.startswith("struct Block_literal_") and stack_var_type_name != self.block_literal_struct.type_name:
+            if stack_var_type_name.startswith("struct Block_literal_") and stack_var_type_name != bd.block_literal_struct.type_name:
                 # Stack var has already been annotated for initialization code
                 # at a different address, likely because multiple branches in
                 # the function place a block at the same stack address.
                 # Unfortunately, this seems to be a hypothetical situation
                 # right now, as Binja does not seem to handle different use of
                 # the same stack area by different branches gracefully.
-                self._bv.x_blocks_plugin_logger.log_warn(f"Block literal at {self.address:x}: Stack var {stack_var.name} already annotated with type {stack_var_type_name}; defined {self.block_literal_struct.type_name} but did not clobber var type, splitting the stack var might help")
+                self._bv.x_blocks_plugin_logger.log_warn(f"Block literal at {self.address:x}: Stack var {stack_var.name} already annotated with type {stack_var_type_name}; may need to split the stack var")
                 return
 
             if not stack_var.name.startswith("stack_block_"):
                 stack_var.name = f"stack_block_{stack_var.name}"
-            stack_var.type = self.block_literal_struct.type_name
+            stack_var.type = bd.block_literal_struct.type_name
             self.insn = self._bv.x_reload_hlil_instruction(self.insn,
                     lambda insn: \
                             isinstance(insn, binja.HighLevelILAssign) and \
@@ -665,63 +647,31 @@ class BlockLiteral:
                             str(insn.dest.src.var.type).startswith('struct Block_literal_'))
         else:
             self.data_var.name = f"global_block_{self.address:x}"
-            self.data_var.type = self.block_literal_struct.type_name
+            self.data_var.type = bd.block_literal_struct.type_name
 
-    def _type_for_ctype(self, ctype):
-        if ctype.endswith("!"):
-            fallback = 'id'
-            ctype = ctype.replace("!", "*")
-        elif ctype.endswith("*"):
-            fallback = 'void *'
-        else:
-            fallback = 'void'
-        try:
-            return self._bv.x_parse_type(ctype)
-        except SyntaxError:
-            # XXX if struct or union and we have member type info, create struct or union and retry
-            return self._bv.x_parse_type(fallback)
+    def annotate_invoke_function(self, bd):
+        """
+        Annotate the invoke function.
+        """
 
-    def annotate_functions(self, bd):
-        """
-        Annotate the invoke function as well as the copy and dispose functions, if they exist.
-        """
         invoke_func = self._bv.get_function_at(self.invoke)
         if invoke_func is not None:
-            if bd.signature_raw is not None:
-                # This works well for most blocks, but because Binja does
-                # not seem to support [Apple's variant of] AArch64 calling
-                # conventions properly when things are passed in v registers
-                # or on the stack, signatures are sometimes wrong.  I find
-                # it useful to have them, even if they are sometimes wrong.
-                # The types assigned here should be correct, assuming no
-                # fallbacks to void were required (those may cause size to
-                # be lost, which for structs by value determines if they
-                # get passed in multiple registers or on the stack).
-                try:
-                    ctypes = objctypes.ObjCEncodedTypes(bd.signature_raw).ctypes
-                    assert len(ctypes) > 0
-                    types = list(map(self._type_for_ctype, ctypes))
-                    types[1] = self.block_literal_struct.pointer_to_type
-                    func_type = binja.Type.function(types[0], types[1:])
-                except NotImplementedError as e:
-                    self._bv.x_blocks_plugin_logger.log_error(f"Failed to parse ObjC type encoding {bd.signature_raw!r}: {type(e).__name__}: {e}")
-                    func_type = None
-            else:
-                # No signature string.
-                func_type = None
+            # The signature type may be None if there was no signature field on
+            # the descriptor or if we failed to parse its ObjC type string.
+            invoke_func_type = bd.signature_type
 
-            if func_type is None and len(invoke_func.parameter_vars) == 0:
+            if invoke_func_type is None and len(invoke_func.parameter_vars) == 0:
                 # If Binja did not pick up on any parameters, fall back to a vararg
                 # signature.  We're not going to clobber any parameter types.
-                func_type = binja.Type.function(binja.Type.void(),
-                                                [self.block_literal_struct.pointer_to_type],
-                                                variable_arguments=True)
+                invoke_func_type = binja.Type.function(binja.Type.void(),
+                                                       [bd.block_literal_struct.pointer_to_type],
+                                                       variable_arguments=True)
 
-            if func_type is None:
+            if invoke_func_type is None:
                 # Finally fall back to surgically setting return and first argument
                 # types, leaving the other parameters undisturbed.
                 invoke_func.return_type = binja.Type.void()
-                invoke_func.parameter_vars[0].set_name_and_type_async("block", self.block_literal_struct.pointer_to_type)
+                invoke_func.parameter_vars[0].set_name_and_type_async("block", bd.block_literal_struct.pointer_to_type)
                 self._bv.update_analysis_and_wait()
 
             else:
@@ -738,51 +688,14 @@ class BlockLiteral:
                 # assignment is still in flight may clobber the type for the
                 # first parameter with the type it had before assigning the
                 # function type.
-                invoke_func.type = func_type
+                invoke_func.type = invoke_func_type
                 self._bv.update_analysis_and_wait()
 
                 if len(invoke_func.parameter_vars) >= 1:
                     invoke_func.parameter_vars[0].name = "block"
 
-                # propagate invoke function signature to invoke pointer on block literal
-                self.block_literal_struct.update_member_type("invoke", binja.Type.pointer(self._bv.arch, func_type))
-
             if invoke_func.name == f"sub_{invoke_func.start:x}":
                 invoke_func.name = f"sub_{invoke_func.start:x}_block_invoke"
-
-        # XXX move remainder to BlockDescriptor when switching to one block literal struct type per descriptor
-
-        if bd.block_has_copy_dispose:
-            # Interleave annotation of the two functions in order to minimize
-            # the number of expensive calls to update_analysis_and_wait().
-            copy_func = self._bv.get_function_at(bd.copy)
-            dispose_func = self._bv.get_function_at(bd.dispose)
-            if copy_func is not None or dispose_func is not None:
-                if copy_func is not None:
-                    copy_func.type = binja.Type.function(binja.Type.void(),
-                                                         [self.block_literal_struct.pointer_to_type,
-                                                          self.block_literal_struct.pointer_to_type])
-                if dispose_func is not None:
-                    dispose_func.type = binja.Type.function(binja.Type.void(),
-                                                            [self.block_literal_struct.pointer_to_type])
-                self._bv.update_analysis_and_wait()
-
-                if copy_func is not None:
-                    if len(copy_func.parameter_vars) >= 2:
-                        copy_func.parameter_vars[0].set_name_async("dst")
-                        copy_func.parameter_vars[1].set_name_async("src")
-                if dispose_func is not None:
-                    if len(dispose_func.parameter_vars) >= 1:
-                        dispose_func.parameter_vars[0].set_name_async("dst")
-                self._bv.update_analysis_and_wait()
-
-                if copy_func is not None:
-                    if copy_func.name == f"sub_{copy_func.start:x}":
-                        copy_func.name = f"sub_{copy_func.start:x}_block_copy"
-
-                if dispose_func is not None:
-                    if dispose_func.name == f"sub_{dispose_func.start:x}":
-                        dispose_func.name = f"sub_{dispose_func.start:x}_block_dispose"
 
 
 class BlockDescriptor:
@@ -837,10 +750,7 @@ class BlockDescriptor:
             self.signature = br.read64()
             if self.signature is None:
                 raise BlockDescriptor.NotABlockDescriptorError(f"Block descriptor at {self.address:x}: signature field does not exist")
-            if self.signature != 0:
-                self.signature_raw = self._bv.get_ascii_string_at(self.signature, 0).raw
-            else:
-                self.signature_raw = None
+
             if self.block_has_extended_layout or \
                     (self.generic_helper_type != BLOCK_GENERIC_HELPER_NONE) or \
                     (not self.block_has_copy_dispose) or \
@@ -894,6 +804,105 @@ class BlockDescriptor:
             self.generic_helper_info = None
             self.generic_helper_info_bytecode = None
 
+        self.block_descriptor_struct = self._generate_block_descriptor_struct()
+        self.block_literal_struct, self.byref_indexes = self._generate_block_literal_struct()
+
+        # propagate struct type to descriptor pointer on block literal
+        self.block_literal_struct.update_member_type("descriptor", self.block_descriptor_struct.pointer_to_type, if_type="struct Block_descriptor_1")
+
+        # We need the block literal struct before parsing the signature because
+        # we want to reference it for the block argument.
+        if self.block_has_signature and self.signature != 0:
+            self.signature_type = self._parse_signature(self._bv.get_ascii_string_at(self.signature, 0).raw)
+        else:
+            self.signature_type = None
+
+        # propagate invoke function signature to invoke pointer on block literal
+        if self.signature_type is not None:
+            self.block_literal_struct.update_member_type("invoke", binja.Type.pointer(self._bv.arch, self.signature_type), if_type="BlockInvokeFunction")
+
+    def _parse_signature(self, signature_raw):
+        if signature_raw is None:
+            return None
+
+        def _type_for_ctype(ctype):
+            if ctype.endswith("!"):
+                fallback = 'id'
+                ctype = ctype.replace("!", "*")
+            elif ctype.endswith("*"):
+                fallback = 'void *'
+            else:
+                fallback = 'void'
+            try:
+                return self._bv.x_parse_type(ctype)
+            except SyntaxError:
+                # XXX if struct or union and we have member type info, create struct or union and retry
+                return self._bv.x_parse_type(fallback)
+
+        # This works well for most blocks, but because Binja does not
+        # seem to support [Apple's variant of] AArch64 calling
+        # conventions properly when things are passed in v registers or
+        # on the stack, signatures are sometimes wrong.
+        try:
+            ctypes = objctypes.ObjCEncodedTypes(signature_raw).ctypes
+            assert len(ctypes) > 0
+            types = list(map(_type_for_ctype, ctypes))
+            types[1] = self.block_literal_struct.pointer_to_type
+            return binja.Type.function(types[0], types[1:])
+        except NotImplementedError as e:
+            self._bv.x_blocks_plugin_logger.log_error(f"Failed to parse ObjC type encoding {signature_raw!r}: {type(e).__name__}: {e}")
+            return None
+
+    def _generate_block_descriptor_struct(self):
+        struct = binja.StructureBuilder.create()
+        if self.reserved == 0:
+            struct.append(self._bv.x_parse_type("uint64_t"), "reserved")
+        else:
+            assert self.in_descriptor_flags is not None
+            struct.append(_parse_libclosure_type(self._bv, "enum Block_flags"), "in_descriptor_flags")
+            struct.append(self._bv.x_parse_type("uint32_t"), "reserved")
+        assert struct.width == 8
+        struct.append(self._bv.x_parse_type("uint64_t"), "size")
+        if self.block_has_copy_dispose:
+            struct.append(_get_libclosure_type(self._bv, "BlockCopyFunction"), "copy")
+            struct.append(_get_libclosure_type(self._bv, "BlockDisposeFunction"), "dispose")
+        if self.block_has_signature:
+            struct.append(self._bv.x_parse_type("char const *"), "signature")
+            if self.layout is not None:
+                if self.layout < 0x1000:
+                    # inline layout encoding
+                    struct.append(self._bv.x_parse_type("uint64_t"), "layout")
+                else:
+                    # out-of-line layout string
+                    struct.append(self._bv.x_parse_type("uint8_t const *"), "layout")
+            else:
+                # Skip the layout field, see ctor for rationale.
+                pass
+        return GeneratedStruct(self._bv, struct, f"Block_descriptor_{self.address:x}")
+
+    def _generate_block_literal_struct(self):
+        # Packed because block layout bytecode can lead to misaligned words,
+        # which according to comments in LLVM source code seems intentional.
+        struct = binja.StructureBuilder.create(packed=True, width=self.size)
+        struct.append(_parse_objc_type(self._bv, "Class"), "isa")
+        struct.append(_parse_libclosure_type(self._bv, "enum Block_flags"), "flags")
+        struct.append(self._bv.x_parse_type("uint32_t"), "reserved")
+        struct.append(_get_libclosure_type(self._bv, "BlockInvokeFunction"), "invoke")
+        struct.append(binja.Type.pointer(self._bv.arch, _parse_libclosure_type(self._bv, "struct Block_descriptor_1")), "descriptor") # placeholder
+        if self.imported_variables_size > 0:
+            generic_helper_layout = Layout.from_generic_helper_info(self._bv, self.generic_helper_type, self.generic_helper_info, self.generic_helper_info_bytecode)
+            layout_layout = Layout.from_layout(self._bv, self.block_has_extended_layout, self.layout, self.layout_bytecode)
+            if generic_helper_layout.prefer_over(layout_layout):
+                self._bv.x_blocks_plugin_logger.log_debug("Preferring generic helper info over layout")
+                chosen_layout = generic_helper_layout
+            else:
+                self._bv.x_blocks_plugin_logger.log_debug("Preferring layout over generic helper info")
+                chosen_layout = layout_layout
+            byref_indexes = chosen_layout.append_fields(struct)
+        else:
+            byref_indexes = []
+        return GeneratedStruct(self._bv, struct, f"Block_literal_{self.address:x}"), byref_indexes
+
     @property
     def imported_variables_size(self):
         return self.size - 0x20
@@ -931,42 +940,13 @@ class BlockDescriptor:
             flags_s = ""
         return f"Block descriptor at {self.address:x} size {self.size:#x}{flags_s}"
 
-    def annotate_descriptor(self, bl):
+    def annotate_descriptor(self):
         """
         Annotate block descriptor.
         """
-        struct = binja.StructureBuilder.create()
-        if self.reserved == 0:
-            struct.append(self._bv.x_parse_type("uint64_t"), "reserved")
-        else:
-            assert self.in_descriptor_flags is not None
-            struct.append(_parse_libclosure_type(self._bv, "enum Block_flags"), "in_descriptor_flags")
-            struct.append(self._bv.x_parse_type("uint32_t"), "reserved")
-        assert struct.width == 8
-        struct.append(self._bv.x_parse_type("uint64_t"), "size")
-        if self.block_has_copy_dispose:
-            struct.append(_get_libclosure_type(self._bv, "BlockCopyFunction"), "copy")
-            struct.append(_get_libclosure_type(self._bv, "BlockDisposeFunction"), "dispose")
-        if self.block_has_signature:
-            struct.append(self._bv.x_parse_type("char const *"), "signature")
-            if self.layout is not None:
-                if self.layout < 0x1000:
-                    # inline layout encoding
-                    struct.append(self._bv.x_parse_type("uint64_t"), "layout")
-                else:
-                    # out-of-line layout string
-                    struct.append(self._bv.x_parse_type("uint8_t const *"), "layout")
-            else:
-                # Skip the layout field, see ctor for rationale.
-                pass
-
-        self.block_descriptor_struct = GeneratedStruct(self._bv, struct, f"Block_descriptor_{self.address:x}")
         self._bv.x_make_data_var(self.address,
                                  self.block_descriptor_struct.type,
                                  f"block_descriptor_{self.address:x}")
-
-        # propagate struct type to descriptor pointer on block literal
-        bl.block_literal_struct.update_member_type("descriptor", self.block_descriptor_struct.pointer_to_type)
 
         # annotate generic helper info
         if self.generic_helper_type in (BLOCK_GENERIC_HELPER_INLINE,
@@ -998,6 +978,60 @@ class BlockDescriptor:
             self._bv.x_make_data_var(self.generic_helper_info,
                                      self._bv.x_parse_type(f"uint8_t [{n}]"),
                                      f"block_generic_helper_info_{self.generic_helper_info:x}")
+
+    def annotate_copy_dispose_functions(self):
+        """
+        Annotate copy and dispose functions, if they exist.  Expensive
+        operations are only performed if the functions have not already been
+        annotated.
+        """
+        if self.block_has_copy_dispose:
+            # Interleave annotation of the two functions in order to minimize
+            # the number of expensive calls to update_analysis_and_wait().
+            copy_func = self._bv.get_function_at(self.copy)
+            dispose_func = self._bv.get_function_at(self.dispose)
+            if copy_func is None and dispose_func is None:
+                return
+
+            need_sync = False
+            if copy_func is not None:
+                if len(copy_func.parameter_vars) < 2 or not str(copy_func.parameter_vars[0].type).startswith("struct Block_literal_"):
+                    copy_func.type = binja.Type.function(binja.Type.void(),
+                                                         [self.block_literal_struct.pointer_to_type,
+                                                          self.block_literal_struct.pointer_to_type])
+                    need_sync = True
+            if dispose_func is not None:
+                if len(dispose_func.parameter_vars) < 1 or not str(dispose_func.parameter_vars[0].type).startswith("struct Block_literal_"):
+                    dispose_func.type = binja.Type.function(binja.Type.void(),
+                                                            [self.block_literal_struct.pointer_to_type])
+                    need_sync = True
+            if need_sync:
+                self._bv.update_analysis_and_wait()
+
+            need_sync = False
+            if copy_func is not None:
+                if len(copy_func.parameter_vars) >= 2:
+                    if copy_func.parameter_vars[0].name != "dst":
+                        copy_func.parameter_vars[0].set_name_async("dst")
+                        need_sync = True
+                    if copy_func.parameter_vars[1].name != "src":
+                        copy_func.parameter_vars[1].set_name_async("src")
+                        need_sync = True
+            if dispose_func is not None:
+                if len(dispose_func.parameter_vars) >= 1:
+                    if dispose_func.parameter_vars[0].name != "dst":
+                        dispose_func.parameter_vars[0].set_name_async("dst")
+                        need_sync = True
+            if need_sync:
+                self._bv.update_analysis_and_wait()
+
+            if copy_func is not None:
+                if copy_func.name == f"sub_{copy_func.start:x}":
+                    copy_func.name = f"sub_{copy_func.start:x}_block_copy"
+
+            if dispose_func is not None:
+                if dispose_func.name == f"sub_{dispose_func.start:x}":
+                    dispose_func.name = f"sub_{dispose_func.start:x}_block_dispose"
 
 
 def annotate_global_block_literal(bv, block_literal_addr, sym_addrs=None):
@@ -1046,10 +1080,11 @@ def annotate_global_block_literal(bv, block_literal_addr, sym_addrs=None):
         bd = BlockDescriptor(bv, bl.descriptor, bl.flags)
         bv.x_blocks_plugin_logger.log_info(str(bd))
         bl.annotate_literal(bd)
-        bd.annotate_descriptor(bl)
+        bd.annotate_descriptor()
         bd.annotate_layout_bytecode()
         bd.annotate_generic_helper_info_bytecode()
-        bl.annotate_functions(bd)
+        bd.annotate_copy_dispose_functions()
+        bl.annotate_invoke_function(bd)
     except BlockLiteral.NotABlockLiteralError as e:
         bv.x_blocks_plugin_logger.log_warn(f"{where}: Not a block literal: {e}")
         return
@@ -1130,10 +1165,11 @@ def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
         bd = BlockDescriptor(bv, bl.descriptor, bl.flags)
         bv.x_blocks_plugin_logger.log_info(str(bd))
         bl.annotate_literal(bd)
-        bd.annotate_descriptor(bl)
+        bd.annotate_descriptor()
         bd.annotate_layout_bytecode()
         bd.annotate_generic_helper_info_bytecode()
-        bl.annotate_functions(bd)
+        bd.annotate_copy_dispose_functions()
+        bl.annotate_invoke_function(bd)
     except BlockLiteral.NotABlockLiteralError as e:
         bv.x_blocks_plugin_logger.log_warn(f"{where}: Not a block literal: {e}")
         return
@@ -1152,11 +1188,11 @@ def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
     # annotate stack byrefs
 
     try:
-        if bd.imported_variables_size > 0 and len(bl.byref_indexes) > 0:
+        if bd.imported_variables_size > 0 and len(bd.byref_indexes) > 0:
 
             # collect byref_srcs
             byref_srcs = []
-            byref_indexes_set = set(bl.byref_indexes)
+            byref_indexes_set = set(bd.byref_indexes)
             for insn in shinobi.yield_struct_field_assign_hlil_instructions_for_var_id(bl.insn.function, bl.insn.dest.src.var.identifier):
                 if isinstance(insn.src, binja.HighLevelILAddressOf):
                     insn_src = insn.src
@@ -1307,8 +1343,8 @@ def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
                 byref_insn_var = byref_insn.var
 
                 # propagate byref type to block literal type
-                # XXX when switching to per-descriptor block literal struct, make sure byref hasn't already been propagated
-                bl.block_literal_struct.update_member_type(byref_member_index, byref_struct.pointer_to_type)
+                # different block literals might propagate different byrefs to the struct type
+                bd.block_literal_struct.update_member_type(byref_member_index, byref_struct.pointer_to_type, if_type="id")
 
                 # annotate functions
                 if (byref_flags & BLOCK_BYREF_HAS_COPY_DISPOSE) != 0:
