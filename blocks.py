@@ -808,7 +808,7 @@ class BlockDescriptor:
         self.block_literal_struct, self.byref_indexes = self._generate_block_literal_struct()
 
         # propagate struct type to descriptor pointer on block literal
-        self.block_literal_struct.update_member_type("descriptor", self.block_descriptor_struct.pointer_to_type, if_type="struct Block_descriptor_1")
+        self.block_literal_struct.update_member_type("descriptor", self.block_descriptor_struct.pointer_to_type, if_type="struct Block_descriptor_1*")
 
         # We need the block literal struct before parsing the signature because
         # we want to reference it for the block argument.
@@ -819,7 +819,7 @@ class BlockDescriptor:
 
         # propagate invoke function signature to invoke pointer on block literal
         if self.signature_type is not None:
-            self.block_literal_struct.update_member_type("invoke", binja.Type.pointer(self._bv.arch, self.signature_type), if_type="BlockInvokeFunction")
+            self.block_literal_struct.update_member_type("invoke", binja.Type.pointer(self._bv.arch, self.signature_type), if_type="void (*)(void*, ...)")
 
     def _parse_signature(self, signature_raw):
         if signature_raw is None:
