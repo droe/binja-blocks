@@ -448,10 +448,12 @@ class GeneratedStruct:
         self.name = name
         self.type_id = binja.Type.generate_auto_type_id(_TYPE_ID_SOURCE, self.name)
 
-        t = self._bv.get_type_by_name(name)
+        t = self._bv.get_type_by_name(self.name)
         if t is not None:
+            self._bv.x_blocks_plugin_logger.log_debug(f"GeneratedStruct: Type with {name=} already exists, using existing type")
             self.builder = binja.StructureBuilder.create(t.members, packed=t.packed, width=t.width)
         else:
+            self._bv.x_blocks_plugin_logger.log_debug(f"GeneratedStruct: Type with {name=} does not exist, defining new type")
             self.builder = builder
             bv.define_type(self.type_id, self.name, self.builder)
 
@@ -465,11 +467,13 @@ class GeneratedStruct:
 
     def update_member_type(self, member_name_or_index, new_member_type, if_type=None):
         if isinstance(member_name_or_index, str):
-            member_index = self.builder.index_by_name(member_name_or_index)
             member_name = member_name_or_index
+            member_index = self.builder.index_by_name(member_name)
+            assert member_index is not None
         elif isinstance(member_name_or_index, int):
             member_index = member_name_or_index
             member_name = self.builder.members[member_index].name
+            assert member_name is not None
         else:
             raise ValueError(f"member_name_or_index argument is of unexpected type {type(member_name_or_index).__name__}")
         if if_type is not None:
@@ -478,7 +482,7 @@ class GeneratedStruct:
         self.builder.replace(member_index, new_member_type, member_name)
         self._bv.define_type(self.type_id, self.name, self.builder)
         self.type = self._bv.x_parse_type(self.type_name)
-
+        assert self.type is not None
 
 class BlockLiteral:
     class NotABlockLiteralError(Exception):
@@ -1125,8 +1129,11 @@ class BlockByref:
             if getattr(self, field, None) is None:
                 raise BlockByref.FailedToFindFieldsError(f"{field} for {where}, likely due to complex HLIL")
 
+        assert self._bv.arch.address_size == 8
+        if self.size < 0x18:
+            raise BlockByref.NotABlockByrefError(f"{where}: Size too small ({self.size:#x} < 0x18)")
         if self.size > 0x1000:
-            raise BlockByref.NotABlockByrefError(f"{where}: Implausible size {self.size:#x}")
+            raise BlockByref.NotABlockByrefError(f"{where}: Size implausibly large ({self.size:#x} > 0x1000)")
 
         struct.width = self.size
 
