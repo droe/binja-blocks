@@ -863,10 +863,10 @@ class BlockDescriptor:
             else:
                 fallback = 'void'
             try:
-                return self._bv.x_parse_type(ctype)
+                return self._bv.x_parse_type(ctype).with_confidence(254)
             except SyntaxError:
                 # XXX if struct or union and we have member type info, create struct or union and retry
-                return self._bv.x_parse_type(fallback)
+                return self._bv.x_parse_type(fallback).with_confidence(200)
 
         # This works well for most blocks, but because Binja does not
         # seem to support [Apple's variant of] AArch64 calling
