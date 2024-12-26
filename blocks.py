@@ -434,9 +434,9 @@ class Layout:
     def append_fields(self, struct):
         byref_indexes = []
         for field in self._fields:
-            if field.is_byref:
-                byref_indexes.append(len(struct.members))
             for _ in range(field.count):
+                if field.is_byref:
+                    byref_indexes.append(len(struct.members))
                 struct.append_with_offset_suffix(field.field_type, field.name_prefix)
         return byref_indexes
 
