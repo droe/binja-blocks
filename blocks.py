@@ -735,13 +735,18 @@ class BlockDescriptor:
     class NotABlockDescriptorError(Exception):
         pass
 
-    def __init__(self, bv, descriptor_address, block_flags):
+    def __init__(self, bv, bl):
         """
-        Read block descriptor from data.
+        Read block descriptor from data at bl.descriptor.
         """
+        assert bl.address is not None and bl.address != 0
+        assert bl.descriptor is not None and bl.descriptor != 0
+        assert bl.flags is not None and bl.flags != 0
+
         self._bv = bv
-        self.address = descriptor_address
-        self.block_flags = block_flags
+        self.address = bl.descriptor
+        self.block_address = bl.address
+        self.block_flags = bl.flags
 
         if self.block_has_small_descriptor:
             raise NotImplementedError("Block has small descriptor, see https://github.com/droe/binja-blocks/issues/19")
@@ -757,8 +762,8 @@ class BlockDescriptor:
             # u32 in_descriptor_flags
             # u32 reserved
             self.in_descriptor_flags = self.reserved & 0xFFFFFFFF
-            if self.in_descriptor_flags & 0xFFFF0000 != block_flags & 0xFFFF0000 & ~BLOCK_SMALL_DESCRIPTOR:
-                raise BlockDescriptor.NotABlockDescriptorError(f"Block descriptor at {self.address:x}: block flags {block_flags:08x} inconsistent with in-descriptor flags {self.in_descriptor_flags:08x}")
+            if self.in_descriptor_flags & 0xFFFF0000 != self.block_flags & 0xFFFF0000 & ~BLOCK_SMALL_DESCRIPTOR:
+                raise BlockDescriptor.NotABlockDescriptorError(f"Block descriptor at {self.address:x}: block flags {self.block_flags:08x} inconsistent with in-descriptor flags {self.in_descriptor_flags:08x}")
         else:
             # u64 reserved
             self.in_descriptor_flags = None
@@ -935,7 +940,22 @@ class BlockDescriptor:
             byref_indexes = chosen_layout.append_fields(struct)
         else:
             byref_indexes = []
-        return GeneratedStruct(self._bv, struct, f"Block_literal_{self.address:x}"), byref_indexes
+
+        # A block descriptor can be used by 1..n block literals.  Block
+        # literals sharing the same descriptor will have identical layout only
+        # as far as described in the invoke signature, and only as far as
+        # relevant to copy/dispose.  Annotation with a single struct type
+        # shared by all block literals with the same descriptor has the benefit
+        # of blocks being passed around having the same type everywhere.
+        # However, as soon as one wants to propagate more specific types for
+        # captures, e.g. `struct Foo *` instead of merely `id`, then a single
+        # shared struct type works less well.  Therefore, using a separate
+        # struct type for each block literal seems preferable.
+        #
+        # We still leave the struct generation in BlockDescriptor, since it is
+        # largely based on information not available in BlockLiteral without
+        # access to BlockDescriptor.
+        return GeneratedStruct(self._bv, struct, f"Block_literal_{self.block_address:x}"), byref_indexes
 
     @property
     def imported_variables_size(self):
@@ -1325,7 +1345,7 @@ def annotate_global_block_literal(bv, block_literal_addr, sym_addrs=None):
     try:
         bl = BlockLiteral.from_data(bv, block_literal_data_var, sym_addrs)
         bv.x_blocks_plugin_logger.log_info(str(bl))
-        bd = BlockDescriptor(bv, bl.descriptor, bl.flags)
+        bd = BlockDescriptor(bv, bl)
         bv.x_blocks_plugin_logger.log_info(str(bd))
         bl.annotate_literal(bd)
         bd.annotate_descriptor()
@@ -1410,7 +1430,7 @@ def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
     try:
         bl = BlockLiteral.from_stack(bv, block_literal_insn, block_literal_var, sym_addrs)
         bv.x_blocks_plugin_logger.log_info(str(bl))
-        bd = BlockDescriptor(bv, bl.descriptor, bl.flags)
+        bd = BlockDescriptor(bv, bl)
         bv.x_blocks_plugin_logger.log_info(str(bd))
         bl.annotate_literal(bd)
         bd.annotate_descriptor()
