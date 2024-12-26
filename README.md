@@ -10,21 +10,7 @@ over and related function signatures in [Binary Ninja](https://binary.ninja/).
 Blocks are an implementation of closures often found in C, C++, ObjC and ObjC++
 code for Apple platforms.  Blocks are not the same as C++ lambdas.
 
-Stack block before annotation:
-
-![Screenshot of stack block before annotation](https://github.com/droe/binja-blocks/blob/0.3.6/.github/img/stack_block_before.png?raw=true)
-
-Stack block after annotation:
-
-![Screenshot of stack block after annotation](https://github.com/droe/binja-blocks/blob/0.3.6/.github/img/stack_block_after.png?raw=true)
-
-Invoke function before annotation:
-
-![Screenshot of invoke function before annotation](https://github.com/droe/binja-blocks/blob/0.3.6/.github/img/invoke_before.png?raw=true)
-
-Invoke function after annotation:
-
-![Screenshot of invoke function after annotation](https://github.com/droe/binja-blocks/blob/0.3.6/.github/img/invoke_after.png?raw=true)
+![Screenshot comparing before and after annotation](https://github.com/droe/binja-blocks/blob/0.4.0/.github/img/showcase.png?raw=true)
 
 Commands:
 
@@ -33,6 +19,7 @@ Commands:
 -   Annotate all stack blocks
 -   Annotate global block here
 -   Annotate stack block here
+-   Annotate stack byref here
 -   Remove plugin comment here (deprecated)
 
 Features:
