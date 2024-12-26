@@ -615,6 +615,9 @@ class BlockLiteral:
             block = f"Global block"
         return f"{block} at {self.address:x} with flags {self.flags:08x} invoke {self.invoke:x} descriptor {self.descriptor:x}"
 
+    def _warn(self, msg):
+        self._bv.x_blocks_plugin_logger.log_warn(f"Block literal at {self.address:x}: {msg}")
+
     def annotate_literal(self, bd):
         """
         Annotate the block literal.
@@ -632,7 +635,7 @@ class BlockLiteral:
                 # Unfortunately, this seems to be a hypothetical situation
                 # right now, as Binja does not seem to handle different use of
                 # the same stack area by different branches gracefully.
-                self._bv.x_blocks_plugin_logger.log_warn(f"Block literal at {self.address:x}: Stack var {stack_var.name} already annotated with type {stack_var_type_name}; may need to split the stack var")
+                self._warn(f"Stack var {stack_var.name} already annotated with type {stack_var_type_name}; may need to split the stack var")
                 return
 
             if not stack_var.name.startswith("stack_block_"):
@@ -719,7 +722,7 @@ class BlockLiteral:
         if len(byref_srcs_set) != len(byref_indexes_set):
             missing_indexes_set = byref_indexes_set - byref_srcs_set
             missing_indexes_str = ', '.join([str(idx) for idx in sorted(missing_indexes_set)])
-            self._bv.x_blocks_plugin_logger.log_warn(f"{where}: Failed to find byref for struct member indexes {missing_indexes_str}, review manually")
+            self._warn(f"Failed to find byref for struct member indexes {missing_indexes_str}, review manually")
 
         return byref_srcs
 
@@ -1060,6 +1063,217 @@ class BlockDescriptor:
                     dispose_func.name = f"sub_{dispose_func.start:x}_block_dispose"
 
 
+class BlockByref:
+    class NotABlockByrefError(Exception):
+        pass
+
+    class FailedToFindFieldsError(Exception):
+        pass
+
+    def __init__(self, bv, byref_insn, byref_insn_var, byref_member_index=None, bd=None):
+        """
+        Parse and annotate stack byref.
+
+        if bd is not None, update the pointer type of block literal struct
+        member at index byref_member_index to be a pointer to the byref's
+        layout type.
+        """
+
+        self._bv = bv
+        self.byref_insn = byref_insn
+        self.byref_insn_var = byref_insn_var
+        self.address = self.byref_insn.address
+        where = f"Block byref at {self.address:x}"
+
+        # So apparently this works; despite the reloads, byref_srcs are not
+        # invalidated, identifiers are still current.  Should that cease to be
+        # the case, we'll need to find next byref_src in a way that is robust
+        # to reloads.
+
+        if not self.byref_insn_var.name.startswith("block_byref_"):
+            self.byref_insn_var.name = f"block_byref_{self.byref_insn_var.name}"
+
+        struct = binja.StructureBuilder.create()
+        struct.append(_parse_objc_type(bv, "Class"), "isa")
+        struct.append(self._bv.x_parse_type("void *"), "forwarding") # placeholder
+        struct.append(_parse_libclosure_type(bv, "enum Block_byref_flags"), "flags")
+        struct.append(self._bv.x_parse_type("uint32_t"), "size")
+
+        self.byref_insn_var.type = struct
+        self.byref_insn = self._bv.x_reload_hlil_instruction(self.byref_insn,
+                lambda insn: \
+                        isinstance(insn, binja.HighLevelILVarDeclare) and \
+                        str(insn.var.type).startswith('struct'))
+        self.byref_insn_var = self.byref_insn.var
+
+        # XXX Detect when there are multiple assignments to the same member_index
+        # in different branches and warn accordingly.
+
+        for insn in shinobi.yield_struct_field_assign_hlil_instructions_for_var_id(self.byref_insn.function, self.byref_insn_var.identifier):
+            # 0 isa
+            # 1 forwarding
+            if insn.dest.member_index == 2:
+                if isinstance(insn.src, (binja.HighLevelILConst,
+                                         binja.HighLevelILConstPtr)):
+                    self.flags = insn.src.constant
+            elif insn.dest.member_index == 3:
+                if isinstance(insn.src, (binja.HighLevelILConst,
+                                         binja.HighLevelILConstPtr)):
+                    self.size = insn.src.constant
+
+        for field in ('flags', 'size'):
+            if getattr(self, field, None) is None:
+                raise BlockByref.FailedToFindFieldsError(f"{field} for {where}, likely due to complex HLIL")
+
+        if self.size > 0x1000:
+            raise BlockByref.NotABlockByrefError(f"{where}: Implausible size {self.size:#x}")
+
+        struct.width = self.size
+
+        if (self.flags & BLOCK_BYREF_HAS_COPY_DISPOSE) != 0:
+            struct.append(_get_libclosure_type(bv, "BlockByrefKeepFunction"), "keep")
+            struct.append(_get_libclosure_type(bv, "BlockByrefDestroyFunction"), "destroy")
+        byref_layout_nibble = (self.flags & BLOCK_BYREF_LAYOUT_MASK)
+        if byref_layout_nibble == BLOCK_BYREF_LAYOUT_EXTENDED:
+            struct.append(self._bv.x_parse_type("void *"), "layout")
+            layout_index = struct.index_by_name("layout")
+            self.byref_insn_var.type = struct
+            self.byref_insn = self._bv.x_reload_hlil_instruction(self.byref_insn,
+                    lambda insn: \
+                            isinstance(insn, binja.HighLevelILVarDeclare) and \
+                            str(insn.var.type).startswith('struct'))
+            self.byref_insn_var = self.byref_insn.var
+            byref_layout = None
+            for insn in shinobi.yield_struct_field_assign_hlil_instructions_for_var_id(self.byref_insn.function, self.byref_insn_var.identifier):
+                if insn.dest.member_index == layout_index:
+                    if isinstance(insn.src, (binja.HighLevelILConst,
+                                             binja.HighLevelILConstPtr)):
+                        byref_layout = insn.src.constant
+                        break
+            else:
+                self._bv.x_blocks_plugin_logger.log_warn(f"{where}: Failed to find layout assignment")
+            if byref_layout is not None and byref_layout != 0:
+                if byref_layout < 0x1000:
+                    # inline layout encoding
+                    byref_layout_bytecode = None
+                    struct.replace(layout_index, self._bv.x_parse_type("uint64_t"), "layout")
+                else:
+                    # out-of-line layout string
+                    byref_layout_bytecode = self._bv.x_get_byte_string_at(byref_layout)
+                    struct.replace(layout_index, self._bv.x_parse_type("uint8_t const *"), "layout")
+            else:
+                byref_layout_bytecode = None
+            byref_layout_layout = Layout.from_layout(bv, True, byref_layout, byref_layout_bytecode)
+            byref_layout_layout.append_fields(struct)
+        elif byref_layout_nibble == BLOCK_BYREF_LAYOUT_NON_OBJECT:
+            struct.append_with_offset_suffix(self._bv.x_parse_type("uint64_t"), "non_object_")
+        elif byref_layout_nibble == BLOCK_BYREF_LAYOUT_STRONG:
+            struct.append_with_offset_suffix(_parse_objc_type(bv, "id"), "strong_ptr_")
+        elif byref_layout_nibble == BLOCK_BYREF_LAYOUT_WEAK:
+            struct.append_with_offset_suffix(_parse_objc_type(bv, "id"), "weak_ptr_")
+        elif byref_layout_nibble == BLOCK_BYREF_LAYOUT_UNRETAINED:
+            struct.append_with_offset_suffix(_parse_objc_type(bv, "id"), "unretained_ptr_")
+
+        self.byref_struct = GeneratedStruct(bv, struct, f"Block_byref_{self.byref_insn.address:x}")
+
+        # propagate registered struct to forwarding self pointer
+        self.byref_struct.update_member_type("forwarding", self.byref_struct.pointer_to_type)
+
+        self.byref_insn_var.type = self.byref_struct.type
+        self.byref_insn = self._bv.x_reload_hlil_instruction(self.byref_insn,
+                lambda insn: \
+                        isinstance(insn, binja.HighLevelILVarDeclare) and \
+                        str(insn.var.type).startswith('struct'))
+        self.byref_insn_var = self.byref_insn.var
+
+        # propagate byref type to block literal type
+        # different block literals might propagate different byrefs to the struct type
+        if bd is not None:
+            bd.block_literal_struct.update_member_type(byref_member_index, self.byref_struct.pointer_to_type, if_type="id")
+
+    def __str__(self):
+        return f"Block byref at {self.address:x} flags {self.flags:08x} size {self.size:#x}"
+
+    def annotate_keep_destroy_functions(self):
+        """
+        Annotate the byref's keep and destroy functions.
+        """
+
+        if (self.flags & BLOCK_BYREF_HAS_COPY_DISPOSE) != 0:
+            keep_index = self.byref_struct.builder.index_by_name("keep")
+            destroy_index = self.byref_struct.builder.index_by_name("destroy")
+            byref_keep = None
+            byref_destroy = None
+            for insn in shinobi.yield_struct_field_assign_hlil_instructions_for_var_id(self.byref_insn.function, self.byref_insn_var.identifier):
+                if insn.dest.member_index == keep_index:
+                    if isinstance(insn.src, (binja.HighLevelILConst,
+                                             binja.HighLevelILConstPtr)):
+                        byref_keep = insn.src.constant
+                elif insn.dest.member_index == destroy_index:
+                    if isinstance(insn.src, (binja.HighLevelILConst,
+                                             binja.HighLevelILConstPtr)):
+                        byref_destroy = insn.src.constant
+            if byref_keep is None:
+                self._bv.x_blocks_plugin_logger.log_warn(f"Block byref at {self.address:x}: Failed to find keep assignment")
+            if byref_destroy is None:
+                self._bv.x_blocks_plugin_logger.log_warn(f"Block byref at {self.address:x}: Failed to find destroy assignment")
+            if byref_keep is None and byref_destroy is None:
+                return
+
+            # Interleave annotation of the two functions in order to minimize
+            # the number of expensive calls to update_analysis_and_wait().
+            if byref_keep is not None:
+                keep_func = self._bv.get_function_at(byref_keep)
+            else:
+                keep_func = None
+            if byref_destroy is not None:
+                destroy_func = self._bv.get_function_at(byref_destroy)
+            else:
+                destroy_func
+            if keep_func is not None or destroy_func is not None:
+                need_sync = False
+                if keep_func is not None:
+                    if len(keep_func.parameter_vars) < 2 or \
+                            not str(keep_func.parameter_vars[0].type).startswith("struct Block_byref_"):
+                        keep_func.type = binja.Type.function(binja.Type.void(),
+                                                             [self.byref_struct.pointer_to_type,
+                                                              self.byref_struct.pointer_to_type])
+                        need_sync = True
+                if destroy_func is not None:
+                    if len(destroy_func.parameter_vars) < 1 or \
+                            not str(destroy_func.parameter_vars[0].type).startswith("struct Block_byref_"):
+                        destroy_func.type = binja.Type.function(binja.Type.void(),
+                                                                [self.byref_struct.pointer_to_type])
+                        need_sync = True
+                if need_sync:
+                    self._bv.update_analysis_and_wait()
+
+                need_sync = False
+                if keep_func is not None:
+                    if len(keep_func.parameter_vars) >= 2:
+                        if keep_func.parameter_vars[0].name != "dst":
+                            keep_func.parameter_vars[0].set_name_async("dst")
+                            need_sync = True
+                        if keep_func.parameter_vars[1].name != "src":
+                            keep_func.parameter_vars[1].set_name_async("src")
+                            need_sync = True
+                if destroy_func is not None:
+                    if len(destroy_func.parameter_vars) >= 1:
+                        if destroy_func.parameter_vars[0].name != "dst":
+                            destroy_func.parameter_vars[0].set_name_async("dst")
+                            need_sync = True
+                if need_sync:
+                    self._bv.update_analysis_and_wait()
+
+                if keep_func is not None:
+                    if keep_func.name == f"sub_{keep_func.start:x}":
+                        keep_func.name = f"sub_{keep_func.start:x}_byref_keep"
+
+                if destroy_func is not None:
+                    if destroy_func.name == f"sub_{destroy_func.start:x}":
+                        destroy_func.name = f"sub_{destroy_func.start:x}_byref_destroy"
+
+
 def annotate_global_block_literal(bv, block_literal_addr, sym_addrs=None):
     where = f"Global block {block_literal_addr:x}"
 
@@ -1198,6 +1412,8 @@ def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
         bl.annotate_invoke_function(bd)
 
         byref_srcs = bl.find_byref_sources(bd)
+        for byref_src, byref_member_index in byref_srcs:
+            annotate_stack_byref(bv, bl.insn.function, None, byref_src, byref_member_index, bd)
 
     except BlockLiteral.NotABlockLiteralError as e:
         bv.x_blocks_plugin_logger.log_warn(f"{where}: Not a block literal: {e}")
@@ -1212,207 +1428,77 @@ def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
         bv.x_blocks_plugin_logger.log_error(f"{where}: {type(e).__name__}: {e}\n{traceback.format_exc()}")
         return
 
-    # XXX refactor byref handling
+
+def annotate_stack_byref(bv, byref_function,
+                         byref_insn=None,
+                         byref_src=None, byref_member_index=None, bd=None):
+
+    if byref_insn is None:
+        # came here from block literal byref member
+        where = f"Stack byref for struct member {byref_member_index}"
+
+        assert byref_src is not None
+        assert byref_member_index is not None
+        assert bd is not None
+
+        if byref_src is None:
+            bv.x_blocks_plugin_logger.log_warn(f"{where}: Source is not an AddressOf, review manually")
+            return
+
+        # need to find byref_insn anf byref_insn_var from byref_src
+        assert isinstance(byref_src, binja.HighLevelILAddressOf)
+        if isinstance(byref_src.src, binja.HighLevelILVar):
+            var_id = byref_src.src.var.identifier
+        else:
+            bv.x_blocks_plugin_logger.log_warn(f"{where}: Source {byref_src} is {type(byref_src.src).__name__}, review manually")
+            return
+
+        for insn in byref_function.instructions:
+            if isinstance(insn, binja.HighLevelILVarDeclare):
+                cand_var = insn.var
+            elif isinstance(insn, binja.HighLevelILVarInit):
+                if isinstance(insn.dest, binja.HighLevelILStructField):
+                    continue
+                cand_var = insn.dest
+            else:
+                continue
+
+            if cand_var.identifier == var_id:
+                byref_insn = insn
+                byref_insn_var = cand_var
+                break
+
+        else:
+            bv.x_blocks_plugin_logger.log_warn(f"{where}: Source var {byref_src} id {var_id:x} not found in function, review manually")
+            return
+
+    else:
+        # came here from byref here plugin command
+        where = f"Stack byref at {byref_insn.address:x}"
+
+        assert byref_src is None
+        assert byref_member_index is None
+        assert bd is None
+
+        # need to find byref_insn_var from byref_insn
+        if isinstance(byref_insn, binja.HighLevelILVarInit):
+            byref_insn_var = byref_insn.dest
+        else:
+            bv.x_blocks_plugin_logger.log_error(f"{where}: Instruction {byref_insn} is {type(byref_insn).__name__}")
+            return
+
+    assert byref_insn is not None
+    assert byref_insn_var is not None
 
     try:
-        # process byref_srcs
-        for byref_src, byref_member_index in byref_srcs:
-            if byref_src is None:
-                bv.x_blocks_plugin_logger.log_warn(f"{where}: Byref for struct member index {byref_member_index} is not an AddressOf, review manually")
-                continue
-            assert isinstance(byref_src, binja.HighLevelILAddressOf)
-            if isinstance(byref_src.src, binja.HighLevelILVar):
-                var_id = byref_src.src.var.identifier
-            else:
-                bv.x_blocks_plugin_logger.log_warn(f"{where}: Byref for struct member index {byref_member_index} and src {byref_src} is {type(byref_src.src).__name__}, review manually")
-                continue
-
-            byref_insn = None
-            for insn in bl.insn.function.instructions:
-                if isinstance(insn, binja.HighLevelILVarDeclare):
-                    cand_var = insn.var
-                elif isinstance(insn, binja.HighLevelILVarInit):
-                    if isinstance(insn.dest, binja.HighLevelILStructField):
-                        continue
-                    cand_var = insn.dest
-                else:
-                    continue
-
-                if cand_var.identifier == var_id:
-                    byref_insn = insn
-                    byref_insn_var = cand_var
-                    break
-
-            else:
-                bv.x_blocks_plugin_logger.log_warn(f"{where}: Byref src var {byref_src} id {var_id:x} not found in function's var declarations and inits")
-                continue
-
-            # So apparently this works; despite the reloads, byref_srcs are not invalidated, identifiers are still current.
-            # Should that cease to be the case, we'll need to find next byref_src in a way that is robust to reloads.
-
-            if not byref_insn_var.name.startswith("block_byref_"):
-                byref_insn_var.name = f"block_byref_{byref_insn_var.name}"
-
-            struct = binja.StructureBuilder.create()
-            struct.append(_parse_objc_type(bv, "Class"), "isa")
-            struct.append(bv.x_parse_type("void *"), "forwarding") # placeholder
-            struct.append(_parse_libclosure_type(bv, "enum Block_byref_flags"), "flags")
-            struct.append(bv.x_parse_type("uint32_t"), "size")
-
-            byref_insn_var.type = struct
-            byref_insn = bv.x_reload_hlil_instruction(byref_insn,
-                    lambda insn: \
-                            isinstance(insn, binja.HighLevelILVarDeclare) and \
-                            str(insn.var.type).startswith('struct'))
-            byref_insn_var = byref_insn.var
-
-            # XXX Detect when there are multiple assignments to the same member_index
-            # in different branches and warn accordingly.
-
-            for insn in shinobi.yield_struct_field_assign_hlil_instructions_for_var_id(byref_insn.function, byref_insn_var.identifier):
-                # 0 isa
-                # 1 forwarding
-                if insn.dest.member_index == 2:
-                    if isinstance(insn.src, (binja.HighLevelILConst,
-                                             binja.HighLevelILConstPtr)):
-                        byref_flags = insn.src.constant
-                elif insn.dest.member_index == 3:
-                    if isinstance(insn.src, (binja.HighLevelILConst,
-                                             binja.HighLevelILConstPtr)):
-                        byref_size = insn.src.constant
-            try:
-                bv.x_blocks_plugin_logger.log_info(f"Block byref at {byref_insn.address:x} flags {byref_flags:08x} size {byref_size:#x}")
-            except UnboundLocalError as e:
-                bv.x_blocks_plugin_logger.log_warn(f"Block byref at {byref_insn.address:x}: Failed to find flags or size assignments")
-                continue
-
-            if byref_size > 0x1000:
-                bv.x_blocks_plugin_logger.log_warn(f"Block byref at {byref_insn.address:x}: Implausible size {byref_size:#x}")
-                continue
-
-            struct.width = byref_size
-
-            if (byref_flags & BLOCK_BYREF_HAS_COPY_DISPOSE) != 0:
-                struct.append(_get_libclosure_type(bv, "BlockByrefKeepFunction"), "keep")
-                struct.append(_get_libclosure_type(bv, "BlockByrefDestroyFunction"), "destroy")
-            byref_layout_nibble = (byref_flags & BLOCK_BYREF_LAYOUT_MASK)
-            if byref_layout_nibble == BLOCK_BYREF_LAYOUT_EXTENDED:
-                struct.append(bv.x_parse_type("void *"), "layout")
-                layout_index = struct.index_by_name("layout")
-                byref_insn_var.type = struct
-                byref_insn = bv.x_reload_hlil_instruction(byref_insn,
-                        lambda insn: \
-                                isinstance(insn, binja.HighLevelILVarDeclare) and \
-                                str(insn.var.type).startswith('struct'))
-                byref_insn_var = byref_insn.var
-                byref_layout = None
-                for insn in shinobi.yield_struct_field_assign_hlil_instructions_for_var_id(byref_insn.function, byref_insn_var.identifier):
-                    if insn.dest.member_index == layout_index:
-                        if isinstance(insn.src, (binja.HighLevelILConst,
-                                                 binja.HighLevelILConstPtr)):
-                            byref_layout = insn.src.constant
-                            break
-                else:
-                    bv.x_blocks_plugin_logger.log_warn(f"Block byref at {byref_insn.address:x}: Failed to find layout assignment")
-                if byref_layout is not None and byref_layout != 0:
-                    if byref_layout < 0x1000:
-                        # inline layout encoding
-                        byref_layout_bytecode = None
-                        struct.replace(layout_index, bv.x_parse_type("uint64_t"), "layout")
-                    else:
-                        # out-of-line layout string
-                        byref_layout_bytecode = bv.x_get_byte_string_at(byref_layout)
-                        struct.replace(layout_index, bv.x_parse_type("uint8_t const *"), "layout")
-                else:
-                    byref_layout_bytecode = None
-                byref_layout_layout = Layout.from_layout(bv, True, byref_layout, byref_layout_bytecode)
-                byref_layout_layout.append_fields(struct)
-            elif byref_layout_nibble == BLOCK_BYREF_LAYOUT_NON_OBJECT:
-                struct.append_with_offset_suffix(bv.x_parse_type("uint64_t"), "non_object_")
-            elif byref_layout_nibble == BLOCK_BYREF_LAYOUT_STRONG:
-                struct.append_with_offset_suffix(_parse_objc_type(bv, "id"), "strong_ptr_")
-            elif byref_layout_nibble == BLOCK_BYREF_LAYOUT_WEAK:
-                struct.append_with_offset_suffix(_parse_objc_type(bv, "id"), "weak_ptr_")
-            elif byref_layout_nibble == BLOCK_BYREF_LAYOUT_UNRETAINED:
-                struct.append_with_offset_suffix(_parse_objc_type(bv, "id"), "unretained_ptr_")
-
-            byref_struct = GeneratedStruct(bv, struct, f"Block_byref_{byref_insn.address:x}")
-
-            # propagate registered struct to forwarding self pointer
-            byref_struct.update_member_type("forwarding", byref_struct.pointer_to_type)
-
-            byref_insn_var.type = byref_struct.type
-            byref_insn = bv.x_reload_hlil_instruction(byref_insn,
-                    lambda insn: \
-                            isinstance(insn, binja.HighLevelILVarDeclare) and \
-                            str(insn.var.type).startswith('struct'))
-            byref_insn_var = byref_insn.var
-
-            # propagate byref type to block literal type
-            # different block literals might propagate different byrefs to the struct type
-            bd.block_literal_struct.update_member_type(byref_member_index, byref_struct.pointer_to_type, if_type="id")
-
-            # annotate functions
-            if (byref_flags & BLOCK_BYREF_HAS_COPY_DISPOSE) != 0:
-                keep_index = byref_struct.builder.index_by_name("keep")
-                destroy_index = byref_struct.builder.index_by_name("destroy")
-                byref_keep = None
-                byref_destroy = None
-                for insn in shinobi.yield_struct_field_assign_hlil_instructions_for_var_id(byref_insn.function, byref_insn_var.identifier):
-                    if insn.dest.member_index == keep_index:
-                        if isinstance(insn.src, (binja.HighLevelILConst,
-                                                 binja.HighLevelILConstPtr)):
-                            byref_keep = insn.src.constant
-                    elif insn.dest.member_index == destroy_index:
-                        if isinstance(insn.src, (binja.HighLevelILConst,
-                                                 binja.HighLevelILConstPtr)):
-                            byref_destroy = insn.src.constant
-                if byref_keep is None:
-                    bv.x_blocks_plugin_logger.log_warn(f"Block byref at {byref_insn.address:x}: Failed to find keep assignment")
-                if byref_destroy is None:
-                    bv.x_blocks_plugin_logger.log_warn(f"Block byref at {byref_insn.address:x}: Failed to find destroy assignment")
-                if byref_keep is None and byref_destroy is None:
-                    continue
-
-                # Interleave annotation of the two functions in order to minimize
-                # the number of expensive calls to update_analysis_and_wait().
-                if byref_keep is not None:
-                    keep_func = bv.get_function_at(byref_keep)
-                else:
-                    keep_func = None
-                if byref_destroy is not None:
-                    destroy_func = bv.get_function_at(byref_destroy)
-                else:
-                    destroy_func
-                if keep_func is not None or destroy_func is not None:
-                    if keep_func is not None:
-                        keep_func.type = binja.Type.function(binja.Type.void(),
-                                                             [byref_struct.pointer_to_type,
-                                                              byref_struct.pointer_to_type])
-                    if destroy_func is not None:
-                        destroy_func.type = binja.Type.function(binja.Type.void(),
-                                                                [byref_struct.pointer_to_type])
-                    bv.update_analysis_and_wait()
-
-                    if keep_func is not None:
-                        if len(keep_func.parameter_vars) >= 2:
-                            keep_func.parameter_vars[0].set_name_async("dst")
-                            keep_func.parameter_vars[1].set_name_async("src")
-                    if destroy_func is not None:
-                        if len(destroy_func.parameter_vars) >= 1:
-                            destroy_func.parameter_vars[0].set_name_async("dst")
-                    bv.update_analysis_and_wait()
-
-                    if keep_func is not None:
-                        if keep_func.name == f"sub_{keep_func.start:x}":
-                            keep_func.name = f"sub_{keep_func.start:x}_byref_keep"
-
-                    if destroy_func is not None:
-                        if destroy_func.name == f"sub_{destroy_func.start:x}":
-                            destroy_func.name = f"sub_{destroy_func.start:x}_byref_destroy"
-
-    except Exception as e:
-        bv.x_blocks_plugin_logger.log_error(f"{where}: {type(e).__name__}: {e}\n{traceback.format_exc()}")
+        bb = BlockByref(bv, byref_insn, byref_insn_var, byref_member_index, bd)
+        bv.x_blocks_plugin_logger.log_info(str(bb))
+        bb.annotate_keep_destroy_functions()
+    except BlockByref.NotABlockByrefError as e:
+        bv.x_blocks_plugin_logger.log_warn(f"{where}: Not a block byref: {e}")
+        return
+    except BlockByref.FailedToFindFieldsError as e:
+        bv.x_blocks_plugin_logger.log_warn(f"{where}: Failed to find byref fields: {e}")
         return
 
 
@@ -1476,6 +1562,16 @@ def plugin_cmd_annotate_global_block_literal_here(bv, address, set_progress=None
     Define a global block literal here.
     """
     annotate_global_block_literal(bv, address)
+
+
+@shinobi.register_for_high_level_il_instruction("Blocks\\Annotate stack byref here", is_valid=is_valid)
+@shinobi.background_task("Blocks: Stack byref")
+@shinobi.undoable
+def plugin_cmd_annotate_stack_byref_here(bv, byref_insn, set_progress=None):
+    """
+    Define a stack byref here.
+    """
+    annotate_stack_byref(bv, byref_insn.function, byref_insn)
 
 
 @shinobi.register("Blocks\\Annotate all stack blocks", is_valid=is_valid)
