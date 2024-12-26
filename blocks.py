@@ -1437,13 +1437,13 @@ def annotate_stack_byref(bv, byref_function,
         # came here from block literal byref member
         where = f"Stack byref for struct member {byref_member_index}"
 
-        assert byref_src is not None
-        assert byref_member_index is not None
-        assert bd is not None
-
         if byref_src is None:
             bv.x_blocks_plugin_logger.log_warn(f"{where}: Source is not an AddressOf, review manually")
             return
+
+        assert byref_src is not None
+        assert byref_member_index is not None
+        assert bd is not None
 
         # find var_id from byref_src
         assert isinstance(byref_src, binja.HighLevelILAddressOf)
