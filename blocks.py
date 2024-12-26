@@ -1420,7 +1420,7 @@ def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
 
         byref_srcs = bl.find_byref_sources(bd)
         for byref_src, byref_member_index in byref_srcs:
-            annotate_stack_byref(bv, bl.insn.function, None, byref_src, byref_member_index, bd)
+            annotate_stack_byref(bv, bl.insn.function, None, byref_src, bl.address, byref_member_index, bd)
 
     except BlockLiteral.NotABlockLiteralError as e:
         bv.x_blocks_plugin_logger.log_warn(f"{where}: Not a block literal: {e}")
@@ -1438,17 +1438,18 @@ def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
 
 def annotate_stack_byref(bv, byref_function,
                          byref_insn=None,
-                         byref_src=None, byref_member_index=None, bd=None):
+                         byref_src=None, block_literal_address=None, byref_member_index=None, bd=None):
 
     if byref_insn is None:
         # came here from block literal byref member
-        where = f"Stack byref for struct member {byref_member_index}"
+        where = f"Stack byref for struct member {byref_member_index} of block literal at {block_literal_address:x}"
 
         if byref_src is None:
             bv.x_blocks_plugin_logger.log_warn(f"{where}: Source is not an AddressOf, review manually")
             return
 
         assert byref_src is not None
+        assert block_literal_address is not None
         assert byref_member_index is not None
         assert bd is not None
 
@@ -1465,6 +1466,7 @@ def annotate_stack_byref(bv, byref_function,
         where = f"Stack byref at {byref_insn.address:x}"
 
         assert byref_src is None
+        assert block_literal_address is None
         assert byref_member_index is None
         assert bd is None
 
