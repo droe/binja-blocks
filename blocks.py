@@ -466,6 +466,7 @@ class GeneratedStruct:
         return binja.Type.pointer(self._bv.arch, self.type)
 
     def update_member_type(self, member_name_or_index, new_member_type, if_type=None):
+        assert member_name_or_index is not None
         if isinstance(member_name_or_index, str):
             member_name = member_name_or_index
             member_index = self.builder.index_by_name(member_name)
@@ -703,32 +704,39 @@ class BlockLiteral:
             if invoke_func.name == f"sub_{invoke_func.start:x}":
                 invoke_func.name = f"sub_{invoke_func.start:x}_block_invoke"
 
-    def find_byref_sources(self, bd):
+    def find_interesting_captures(self, bd):
         """
-        Find all stack byref source variables referenced by imported variables
-        in this block literal's imported variables.
+        Find interesting captures of this block literal:
+        -   Captured stack byrefs and their source variables
+        -   Captures of self
         """
-        if bd.imported_variables_size == 0 or len(bd.byref_indexes) == 0:
-            return []
+        byref_captures = []
+        self_captures = []
 
-        byref_srcs = []
+        if bd.imported_variables_size == 0:
+            return byref_captures, self_captures
+
         byref_indexes_set = set(bd.byref_indexes)
         for insn in shinobi.yield_struct_field_assign_hlil_instructions_for_var_id(self.insn.function, self.insn.dest.src.var.identifier):
-            if isinstance(insn.src, binja.HighLevelILAddressOf):
-                insn_src = insn.src
-            else:
-                insn_src = None
+            if insn.dest.member_index is None:
+                # No field declared at offset insn.dest.offset.  We could try
+                # to create fields automatically here, but let's leave it to
+                # the user for now.
+                continue
 
-            if insn.dest.member_index in byref_indexes_set:
-                byref_srcs.append((insn_src, insn.dest.member_index))
+            if insn.dest.member_index in byref_indexes_set and isinstance(insn.src, binja.HighLevelILAddressOf):
+                byref_captures.append((insn.dest.member_index, insn.src))
 
-        byref_srcs_set = set([t[1] for t in byref_srcs])
-        if len(byref_srcs_set) != len(byref_indexes_set):
-            missing_indexes_set = byref_indexes_set - byref_srcs_set
+            if isinstance(insn.src, binja.HighLevelILVar) and insn.src.var.name == "self":
+                self_captures.append((insn.dest.member_index, insn.src.var.type))
+
+        byref_captures_set = set([t[0] for t in byref_captures])
+        if len(byref_captures_set) != len(byref_indexes_set):
+            missing_indexes_set = byref_indexes_set - byref_captures_set
             missing_indexes_str = ', '.join([str(idx) for idx in sorted(missing_indexes_set)])
-            self._warn(f"Failed to find byref for struct member indexes {missing_indexes_str}, review manually")
+            self._warn(f"Failed to find byref capture for struct member indexes {missing_indexes_str}, review manually")
 
-        return byref_srcs
+        return byref_captures, self_captures
 
 
 class BlockDescriptor:
@@ -1439,9 +1447,11 @@ def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
         bd.annotate_copy_dispose_functions()
         bl.annotate_invoke_function(bd)
 
-        byref_srcs = bl.find_byref_sources(bd)
-        for byref_src, byref_member_index in byref_srcs:
-            annotate_stack_byref(bv, bl.insn.function, None, byref_src, bl.address, byref_member_index, bd)
+        byref_captures, self_captures = bl.find_interesting_captures(bd)
+        for member_index, byref_src in byref_captures:
+            annotate_stack_byref(bv, bl.insn.function, None, byref_src, bl.address, member_index, bd)
+        for member_index, self_type in self_captures:
+            bd.block_literal_struct.update_member_type(member_index, self_type, if_type="id")
 
     except BlockLiteral.NotABlockLiteralError as e:
         bv.x_blocks_plugin_logger.log_warn(f"{where}: Not a block literal: {e}")
@@ -1464,10 +1474,6 @@ def annotate_stack_byref(bv, byref_function,
     if byref_insn is None:
         # came here from block literal byref member
         where = f"Stack byref for struct member {byref_member_index} of block literal at {block_literal_address:x}"
-
-        if byref_src is None:
-            bv.x_blocks_plugin_logger.log_warn(f"{where}: Source is not an AddressOf, review manually")
-            return
 
         assert byref_src is not None
         assert block_literal_address is not None
