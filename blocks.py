@@ -1445,31 +1445,12 @@ def annotate_stack_byref(bv, byref_function,
             bv.x_blocks_plugin_logger.log_warn(f"{where}: Source is not an AddressOf, review manually")
             return
 
-        # need to find byref_insn anf byref_insn_var from byref_src
+        # find var_id from byref_src
         assert isinstance(byref_src, binja.HighLevelILAddressOf)
         if isinstance(byref_src.src, binja.HighLevelILVar):
             var_id = byref_src.src.var.identifier
         else:
             bv.x_blocks_plugin_logger.log_warn(f"{where}: Source {byref_src} is {type(byref_src.src).__name__}, review manually")
-            return
-
-        for insn in byref_function.instructions:
-            if isinstance(insn, binja.HighLevelILVarDeclare):
-                cand_var = insn.var
-            elif isinstance(insn, binja.HighLevelILVarInit):
-                if isinstance(insn.dest, binja.HighLevelILStructField):
-                    continue
-                cand_var = insn.dest
-            else:
-                continue
-
-            if cand_var.identifier == var_id:
-                byref_insn = insn
-                byref_insn_var = cand_var
-                break
-
-        else:
-            bv.x_blocks_plugin_logger.log_warn(f"{where}: Source var {byref_src} id {var_id:x} not found in function, review manually")
             return
 
     else:
@@ -1480,12 +1461,38 @@ def annotate_stack_byref(bv, byref_function,
         assert byref_member_index is None
         assert bd is None
 
-        # need to find byref_insn_var from byref_insn
+        # find var_id from byref_insn
         if isinstance(byref_insn, binja.HighLevelILVarInit):
-            byref_insn_var = byref_insn.dest
+            var_id = byref_insn.dest.identifier
+        elif isinstance(byref_insn, binja.HighLevelILAssign):
+            if not isinstance(byref_insn.dest, binja.HighLevelILVar):
+                bv.x_blocks_plugin_logger.log_error(f"{where}: Instruction {byref_insn} dest {byref_insn.dest} is {type(byref_insn.dest).__name__}, expected HighLevelILVar")
+                return
+            var_id = byref_insn.dest.var.identifier
         else:
-            bv.x_blocks_plugin_logger.log_error(f"{where}: Instruction {byref_insn} is {type(byref_insn).__name__}")
+            bv.x_blocks_plugin_logger.log_error(f"{where}: Instruction {byref_insn} is {type(byref_insn).__name__}, expected HighLevelILVarInit or HighLevelILAssign")
             return
+
+    # Reload predicates in BlockByref depend on byref_insn being the
+    # declaration or initialization, not some random other instruction.
+    for insn in byref_function.instructions:
+        if isinstance(insn, binja.HighLevelILVarDeclare):
+            cand_var = insn.var
+        elif isinstance(insn, binja.HighLevelILVarInit):
+            if isinstance(insn.dest, binja.HighLevelILStructField):
+                continue
+            cand_var = insn.dest
+        else:
+            continue
+
+        if cand_var.identifier == var_id:
+            byref_insn = insn
+            byref_insn_var = cand_var
+            break
+
+    else:
+        bv.x_blocks_plugin_logger.log_warn(f"{where}: Source var {byref_src} id {var_id:x} not found in function, review manually")
+        return
 
     assert byref_insn is not None
     assert byref_insn_var is not None
