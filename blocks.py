@@ -757,7 +757,8 @@ class BlockDescriptor:
             # u32 in_descriptor_flags
             # u32 reserved
             self.in_descriptor_flags = self.reserved & 0xFFFFFFFF
-            assert self.in_descriptor_flags & 0xFFFF0000 == block_flags & 0xFFFF0000 & ~BLOCK_SMALL_DESCRIPTOR
+            if self.in_descriptor_flags & 0xFFFF0000 != block_flags & 0xFFFF0000 & ~BLOCK_SMALL_DESCRIPTOR:
+                raise BlockDescriptor.NotABlockDescriptorError(f"Block descriptor at {self.address:x}: block flags {block_flags:08x} inconsistent with in-descriptor flags {self.in_descriptor_flags:08x}")
         else:
             # u64 reserved
             self.in_descriptor_flags = None
