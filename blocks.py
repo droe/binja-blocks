@@ -1313,7 +1313,7 @@ class BlockByref:
 def annotate_global_block_literal(bv, block_literal_addr, sym_addrs=None):
     where = f"Global block {block_literal_addr:x}"
 
-    bv.x_blocks_plugin_logger.log_info(f"Annotating {where}")
+    bv.x_blocks_plugin_logger.log_debug(f"Annotating {where}")
 
     if sym_addrs is None:
         sym_addrs = bv.x_get_symbol_addresses_set("__NSConcreteGlobalBlock")
@@ -1378,7 +1378,7 @@ def annotate_global_block_literal(bv, block_literal_addr, sym_addrs=None):
 def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
     where = f"Stack block {block_literal_insn.address:x}"
 
-    bv.x_blocks_plugin_logger.log_info(f"Annotating {where}")
+    bv.x_blocks_plugin_logger.log_debug(f"Annotating {where}")
 
     if sym_addrs is None:
         sym_addrs = bv.x_get_symbol_addresses_set("__NSConcreteStackBlock")
@@ -1474,6 +1474,7 @@ def annotate_stack_byref(bv, byref_function,
     if byref_insn is None:
         # came here from block literal byref member
         where = f"Stack byref for struct member {byref_member_index} of block literal at {block_literal_address:x}"
+        bv.x_blocks_plugin_logger.log_debug(f"Annotating {where}")
 
         assert byref_src is not None
         assert block_literal_address is not None
@@ -1491,6 +1492,7 @@ def annotate_stack_byref(bv, byref_function,
     else:
         # came here from byref here plugin command
         where = f"Stack byref at {byref_insn.address:x}"
+        bv.x_blocks_plugin_logger.log_debug(f"Annotating {where}")
 
         assert byref_src is None
         assert block_literal_address is None
@@ -1542,6 +1544,9 @@ def annotate_stack_byref(bv, byref_function,
         return
     except BlockByref.FailedToFindFieldsError as e:
         bv.x_blocks_plugin_logger.log_warn(f"{where}: Failed to find byref fields: {e}")
+        return
+    except Exception as e:
+        bv.x_blocks_plugin_logger.log_error(f"{where}: {type(e).__name__}: {e}\n{traceback.format_exc()}")
         return
 
 
