@@ -451,6 +451,8 @@ class GeneratedStruct:
         t = self._bv.get_type_by_name(self.name)
         if t is not None:
             self._bv.x_blocks_plugin_logger.log_debug(f"GeneratedStruct: Type with {name=} already exists, using existing type")
+            if self._bv.get_type_id(self.name) != self.type_id:
+                self._bv.x_blocks_plugin_logger.log_warn(f"GeneratedStruct: Loaded type_id {self._bv.get_type_id(self.name)} differs from computed type_id {self.type_id}")
             self.builder = binja.StructureBuilder.create(t.members, packed=t.packed, width=t.width)
         else:
             self._bv.x_blocks_plugin_logger.log_debug(f"GeneratedStruct: Type with {name=} does not exist, defining new type")
