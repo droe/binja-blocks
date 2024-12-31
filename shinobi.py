@@ -97,7 +97,8 @@ class Task(binja.plugin.BackgroundTaskThread):
     BinaryView can be running at a given time; additional tasks are queued
     until the running task has finished.  Binary Ninja may or may not limit
     concurrency even further.  Tasks spawned before initial analysis has
-    completed are held until analysis is complete.
+    completed are held until analysis is complete.  Cancellation cancels queued
+    tasks as well.
     """
 
     class Cancelled(Exception):
@@ -126,6 +127,12 @@ class Task(binja.plugin.BackgroundTaskThread):
         self.__func(self.__bv, *self.__args, **(self.__kvargs | {'set_progress': self.set_progress}))
         self.finish()
         assert self.__bv._x_running == self
+
+        if self.__can_cancel and self.cancelled:
+            self.__bv._x_running = None
+            self.__bv._x_waiting = []
+            return
+
         assert self.__bv.has_initial_analysis()
         if len(self.__bv._x_waiting) > 0:
             self.__bv._x_running = self.__bv._x_waiting.pop(0)
