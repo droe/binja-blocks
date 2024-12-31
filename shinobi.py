@@ -124,21 +124,22 @@ class Task(binja.plugin.BackgroundTaskThread):
             raise Task.Cancelled()
 
     def run(self):
-        self.__func(self.__bv, *self.__args, **(self.__kvargs | {'set_progress': self.set_progress}))
+        if not (self.__can_cancel and self.cancelled):
+            self.__func(self.__bv, *self.__args, **(self.__kvargs | {'set_progress': self.set_progress}))
         self.finish()
         assert self.__bv._x_running == self
+        self.__bv._x_running = None
 
         if self.__can_cancel and self.cancelled:
-            self.__bv._x_running = None
-            self.__bv._x_waiting = []
+            while len(self.__bv._x_waiting) > 0:
+                task = self.__bv._x_waiting.pop(0)
+                task.finish()
             return
 
         assert self.__bv.has_initial_analysis()
         if len(self.__bv._x_waiting) > 0:
             self.__bv._x_running = self.__bv._x_waiting.pop(0)
             self.__bv._x_running.start()
-        else:
-            self.__bv._x_running = None
 
     @classmethod
     def spawn(cls, label, func, bv, *args, **kvargs):
