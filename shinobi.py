@@ -23,6 +23,30 @@ import binaryninja as binja
 
 
 #
+# BinaryView finalized and initial analysis event decorators
+#
+
+
+def binaryview_finalized_event(func):
+    """
+    Register decorated function as a callback to be called when a BinaryView is
+    finalized.
+    """
+    binja.BinaryViewType.add_binaryview_finalized_event(func)
+    return func
+
+
+def binaryview_initial_analysis_completion_event(func):
+    """
+    Register decorated function as a callback to be called after the initial
+    analysis, as well as linear sweep and signature matcher (if they are
+    configured to run) completed for a BinaryView.
+    """
+    binja.BinaryViewType.add_binaryview_initial_analysis_completion_event(func)
+    return func
+
+
+#
 # Plugin command decorators
 #
 
@@ -69,18 +93,17 @@ def register_for_high_level_il_instruction(label, *args, **kvargs):
 
 class Task(binja.plugin.BackgroundTaskThread):
     """
-    Helper class to run an analysis on a background thread.
-    Only one task can be running at a given time; additional
-    tasks are queued until the running task has finished.
+    Helper class to run an analysis on a background thread.  Only one task per
+    BinaryView can be running at a given time; additional tasks are queued
+    until the running task has finished.  Binary Ninja may or may not limit
+    concurrency even further.  Tasks spawned before initial analysis has
+    completed are held until analysis is complete.
     """
 
     class Cancelled(Exception):
         pass
 
-    __running = None
-    __waiting = []
-
-    def __init__(self, label, func, *args, **kvargs):
+    def __init__(self, label, func, bv, *args, **kvargs):
         if "can_cancel" in kvargs:
             self.__can_cancel = kvargs["can_cancel"]
             del kvargs["can_cancel"]
@@ -89,6 +112,8 @@ class Task(binja.plugin.BackgroundTaskThread):
         super().__init__(label, self.__can_cancel)
         self.__label = label
         self.__func = func
+        self.__bv = bv
+        assert isinstance(self.__bv, binja.BinaryView)
         self.__args = args
         self.__kvargs = kvargs
 
@@ -98,23 +123,46 @@ class Task(binja.plugin.BackgroundTaskThread):
             raise Task.Cancelled()
 
     def run(self):
-        self.__func(*self.__args, **(self.__kvargs | {'set_progress': self.set_progress}))
+        self.__func(self.__bv, *self.__args, **(self.__kvargs | {'set_progress': self.set_progress}))
         self.finish()
-        assert Task.__running == self
-        if len(Task.__waiting) > 0:
-            Task.__running = Task._waiting.pop(0)
-            Task.__running.start()
+        assert self.__bv._x_running == self
+        assert self.__bv.has_initial_analysis()
+        if len(self.__bv._x_waiting) > 0:
+            self.__bv._x_running = self.__bv._x_waiting.pop(0)
+            self.__bv._x_running.start()
         else:
-            Task.__running = None
+            self.__bv._x_running = None
 
     @classmethod
-    def spawn(cls, label, func, *args, **kvargs):
-        task = cls(label, func, *args, **kvargs)
-        if Task.__running is not None:
-            Task.__waiting.append(task)
+    def spawn(cls, label, func, bv, *args, **kvargs):
+        if not hasattr(bv, "_x_running"):
+            bv._x_running = None
+            bv._x_waiting = []
+
+        task = cls(label, func, bv, *args, **kvargs)
+
+        if task.__bv._x_running is not None or not bv.has_initial_analysis():
+            task.__bv._x_waiting.append(task)
         else:
-            Task.__running = task
-            Task.__running.start()
+            assert task.__bv._x_running is None
+            assert task.__bv.has_initial_analysis()
+            task.__bv._x_running = task
+            task.__bv._x_running.start()
+
+    @classmethod
+    def binaryview_initial_analysis_completion_event(cls, bv):
+        assert bv.has_initial_analysis()
+        if not hasattr(bv, "_x_running"):
+            return
+        assert bv._x_running is None
+        if len(bv._x_waiting) > 0:
+            bv._x_running = bv._x_waiting.pop(0)
+            bv._x_running.start()
+
+
+@binaryview_initial_analysis_completion_event
+def _binaryview_initial_analysis_completion_event(bv):
+    Task.binaryview_initial_analysis_completion_event(bv)
 
 
 def background_task(label="Plugin action", can_cancel=True):
