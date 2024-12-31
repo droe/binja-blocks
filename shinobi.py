@@ -74,40 +74,50 @@ class Task(binja.plugin.BackgroundTaskThread):
     tasks are queued until the running task has finished.
     """
 
-    _running = None
-    _waiting = []
+    class Cancelled(Exception):
+        pass
+
+    __running = None
+    __waiting = []
 
     def __init__(self, label, func, *args, **kvargs):
-        super().__init__(label, False)
-        self._label = label
-        self._func = func
-        self._args = args
-        self._kvargs = kvargs
+        if "can_cancel" in kvargs:
+            self.__can_cancel = kvargs["can_cancel"]
+            del kvargs["can_cancel"]
+        else:
+            self.__can_cancel = False
+        super().__init__(label, self.__can_cancel)
+        self.__label = label
+        self.__func = func
+        self.__args = args
+        self.__kvargs = kvargs
 
     def set_progress(self, text):
-        self.progress = f"{self._label}...{text}"
+        self.progress = f"{self.__label}...{text}"
+        if self.__can_cancel and self.cancelled:
+            raise Task.Cancelled()
 
     def run(self):
-        self._func(*self._args, **(self._kvargs | {'set_progress': self.set_progress}))
+        self.__func(*self.__args, **(self.__kvargs | {'set_progress': self.set_progress}))
         self.finish()
-        assert Task._running == self
-        if len(Task._waiting) > 0:
-            Task._running = Task._waiting.pop(0)
-            Task._running.start()
+        assert Task.__running == self
+        if len(Task.__waiting) > 0:
+            Task.__running = Task._waiting.pop(0)
+            Task.__running.start()
         else:
-            Task._running = None
+            Task.__running = None
 
     @classmethod
     def spawn(cls, label, func, *args, **kvargs):
         task = cls(label, func, *args, **kvargs)
-        if Task._running is not None:
-            Task._waiting.append(task)
+        if Task.__running is not None:
+            Task.__waiting.append(task)
         else:
-            Task._running = task
-            Task._running.start()
+            Task.__running = task
+            Task.__running.start()
 
 
-def background_task(label="Plugin action"):
+def background_task(label="Plugin action", can_cancel=True):
     """
     Decorator for plugin command functions to run them on a
     background thread using Task.
@@ -119,7 +129,7 @@ def background_task(label="Plugin action"):
     """
     def decorator(func):
         def closure(*args, **kvargs):
-            Task.spawn(label, func, *args, **kvargs)
+            Task.spawn(label, func, *args, can_cancel=can_cancel, **kvargs)
         closure.__doc__ = func.__doc__
         return closure
     return decorator

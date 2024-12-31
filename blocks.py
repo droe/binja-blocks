@@ -1558,11 +1558,14 @@ def annotate_all_global_blocks(bv, set_progress=None):
         bv.x_blocks_plugin_logger.log_info("__NSConcreteGlobalBlock not found, target does not appear to contain any global blocks")
         return
 
-    for sym_addr in sym_addrs:
-        for addr in bv.get_data_refs(sym_addr):
-            if set_progress is not None:
-                set_progress(f"{addr:x}")
-            annotate_global_block_literal(bv, addr, sym_addrs)
+    try:
+        for sym_addr in sym_addrs:
+            for addr in bv.get_data_refs(sym_addr):
+                if set_progress is not None:
+                    set_progress(f"{addr:x}")
+                annotate_global_block_literal(bv, addr, sym_addrs)
+    except shinobi.Task.Cancelled:
+        pass
 
 
 def annotate_all_stack_blocks(bv, set_progress=None):
@@ -1580,18 +1583,21 @@ def annotate_all_stack_blocks(bv, set_progress=None):
     #    print(refsrc)
     #    print(refsrc.llil, refsrc.mlil, refsrc.hlil, refsrc.llil.hlil, refsrc.llil.hlils)
 
-    for insn in bv.hlil_instructions:
-        if not isinstance(insn, (binja.HighLevelILVarInit,
-                                 binja.HighLevelILAssign)):
-            continue
-        if not isinstance(insn.src, (binja.HighLevelILImport,
-                                     binja.HighLevelILConstPtr)):
-            continue
-        if insn.src.constant not in sym_addrs:
-            continue
-        if set_progress is not None:
-            set_progress(f"{insn.address:x}")
-        annotate_stack_block_literal(bv, insn, sym_addrs)
+    try:
+        for insn in bv.hlil_instructions:
+            if not isinstance(insn, (binja.HighLevelILVarInit,
+                                     binja.HighLevelILAssign)):
+                continue
+            if not isinstance(insn.src, (binja.HighLevelILImport,
+                                         binja.HighLevelILConstPtr)):
+                continue
+            if insn.src.constant not in sym_addrs:
+                continue
+            if set_progress is not None:
+                set_progress(f"{insn.address:x}")
+            annotate_stack_block_literal(bv, insn, sym_addrs)
+    except shinobi.Task.Cancelled:
+        pass
 
 
 @shinobi.register_for_high_level_il_instruction("Blocks\\Annotate stack block here", is_valid=is_valid)
