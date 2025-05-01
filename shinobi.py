@@ -21,6 +21,8 @@
 
 import binaryninja as binja
 
+import time
+
 
 #
 # BinaryView finalized and initial analysis event decorators
@@ -124,6 +126,12 @@ class Task(binja.plugin.BackgroundTaskThread):
             raise Task.Cancelled()
 
     def run(self):
+        # Workaround for issue introduced in Binary Ninja 5.0, where
+        # the binaryview_initial_analysis_completion_event is fired
+        # while has_initial_analysis() still returns False.
+        while not self.__bv.has_initial_analysis():
+            time.sleep(1)
+
         if not (self.__can_cancel and self.cancelled):
             self.__func(self.__bv, *self.__args, **(self.__kvargs | {'set_progress': self.set_progress}))
         self.finish()
@@ -159,7 +167,10 @@ class Task(binja.plugin.BackgroundTaskThread):
 
     @classmethod
     def binaryview_initial_analysis_completion_event(cls, bv):
-        assert bv.has_initial_analysis()
+        # Binary Ninja 5.0 fires this event before has_initial_analysis()
+        # returns True, so we cannot assert here and need a workaround in
+        # run() instead.
+        #assert bv.has_initial_analysis()
         if not hasattr(bv, "_x_running"):
             return
         assert bv._x_running is None
