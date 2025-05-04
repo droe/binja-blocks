@@ -8,7 +8,7 @@ Annotation of Apple [libclosure](https://github.com/apple-oss-distributions/libc
 Type annotation of stack and global blocks, block descriptors, variables closed
 over and related function signatures in [Binary Ninja](https://binary.ninja/).
 Blocks are an implementation of closures often found in C, C++, ObjC and ObjC++
-code for Apple platforms.  Blocks are not the same as C++ lambdas.
+code for Apple platforms.  Blocks are distinct from C++ lambdas.
 
 ![Screenshot comparing before and after annotation](https://github.com/droe/binja-blocks/blob/0.4.0/.github/img/showcase.png?raw=true)
 
@@ -20,7 +20,6 @@ Commands:
 -   Annotate global block here
 -   Annotate stack block here
 -   Annotate stack byref here
--   Remove plugin comment here (deprecated)
 
 Features:
 
@@ -37,16 +36,15 @@ Features:
 -   Define per-block and per-byref named structs to allow for manual fixups
 -   Define structs for fully manual annotation: `Block_literal`,
     `Block_descriptor_1`, `Block_descriptor_2`, `Block_descriptor_3`,
-    `Block_byref_1`, `Block_byref_2`, `Block_byref_3`.
+    `Block_byref_1`, `Block_byref_2`, `Block_byref_3`
 
 Known limitations:
 
 -   Automatic discovery of blocks and byrefs on the stack is unreliable by
     nature and depends on Binary Ninja's ability to lift into clean HLIL
--   No support for "small descriptors"
 -   No support for 32-bit architectures
--   No support for "old GC layout"
--   No support for older block layout from before the introduction of block descriptors
+-   No support for "small descriptors", "old GC layout", older block layout before
+    the introduction of block descriptors
 -   Byrefs passed as function arguments are not automatically discovered
 
 ## References

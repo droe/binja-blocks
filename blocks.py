@@ -1665,18 +1665,3 @@ def plugin_cmd_annotate_all_blocks(bv, set_progress=None):
     _define_ns_concrete_block_imports(bv)
     annotate_all_global_blocks(bv, set_progress=set_progress)
     annotate_all_stack_blocks(bv, set_progress=set_progress)
-
-
-# This is no longer a useful command as the plugin no longer sets any comments.
-# However, folks still have Binja databases with comments where having this
-# command is still useful despite the plugin not adding these any longer.
-@shinobi.register_for_address("Blocks\\Remove plugin comment here", is_valid=is_valid)
-@shinobi.background_task("Blocks: Remove comment")
-@shinobi.undoable
-def plugin_cmd_remove_plugin_comment_here(bv, address, set_progress=None):
-    """
-    Remove global comment here.
-    Useful to remove comments added by this plugin, e.g. after manually
-    adding missing imported variables to block literals.
-    """
-    bv.set_comment_at(address, None)
