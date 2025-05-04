@@ -69,6 +69,7 @@ class ObjCEncodedTypes:
     O   bycopy
     R   byref
     V   oneway
+    A   atomic
 
     Property encodings:
     R   read-only
@@ -185,6 +186,10 @@ class ObjCEncodedTypes:
     >>> o = ObjCEncodedTypes(b'^{os_state_data_s=I(?=b32I){os_state_data_decoder_s=[64c][64c]}[64c][0C]}16@?0^{os_state_hints_s=I*II}8')
     >>> o.ctypes
     ['struct os_state_data_s *', 'void *', 'struct os_state_hints_s *']
+
+    >>> o = ObjCEncodedTypes(b'v32@?0^{firehose_client_s=}8Q16^{firehose_chunk_s=[0C](?=AQQ{?=SSCCCb1b1b6})Q[4080C]}24')
+    >>> o.ctypes
+    ['void', 'void *', 'struct firehose_client_s *', 'unsigned long long', 'struct firehose_chunk_s *']
     """
 
     BASIC_TYPE_MAP = {
@@ -273,7 +278,8 @@ class ObjCEncodedTypes:
             quals.append("const")
             self._consume(1)
             c = self._peek()
-        elif c in [b"n", b"N", b"o", b"O", b"R", b"V"]:
+        elif c in [b"n", b"N", b"o", b"O", b"R", b"V", b"A"]:
+            # As of Binja 5.1.7372-dev: CType::Atomic not implemented
             self._consume(1)
             c = self._peek()
         if len(quals) > 0:
