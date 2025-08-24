@@ -42,6 +42,8 @@ Known limitations:
 
 -   Automatic discovery of blocks and byrefs on the stack is unreliable by
     nature and depends on Binary Ninja's ability to lift into clean HLIL
+-   The current implementation is very slow due to relying on re-analysis,
+    operating on HLIL, and using a strictly serial algorithm
 -   No support for 32-bit architectures
 -   No support for "small descriptors", "old GC layout", older block layout before
     the introduction of block descriptors
