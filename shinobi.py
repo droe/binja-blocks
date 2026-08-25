@@ -24,6 +24,9 @@ import binaryninja as binja
 import time
 
 
+# Check for New HighLevelILStructInit analysis
+_STRUCT_INIT_TYPES = tuple(t for t in (getattr(binja, 'HighLevelILStructInit', None),) if t is not None)
+
 #
 # BinaryView finalized and initial analysis event decorators
 #
@@ -311,7 +314,7 @@ def _reload_hlil_instruction(self, hlil_insn, predicate=None):
     """
     reloaded_func = self.get_function_at(hlil_insn.function.source_function.start)
     for insn in reloaded_func.hlil.instructions:
-        if insn.address == hlil_insn.address:
+        if hlil_insn.address in get_hlil_instruction_addresses(insn):
             if predicate is not None and not predicate(insn):
                 continue
             reloaded_insn = insn
@@ -352,15 +355,110 @@ binja.BinaryView.x_get_byte_string_at = _get_byte_string_at
 #
 
 
+def get_struct_init(insn):
+    """
+    Return the structure initializer that insn assigns to a whole variable,
+    or None if insn is not such an instruction.
+
+    Binary Ninja 6.0 folds `var.a = x; var.b = y;` into `var = {.a = x, .b = y}`
+    when the variable has a struct type covering the written fields.
+    """
+    if not isinstance(insn, (binja.HighLevelILVarInit, binja.HighLevelILAssign)):
+        return None
+    if isinstance(insn, binja.HighLevelILAssign) and \
+            not isinstance(insn.dest, binja.HighLevelILVar):
+        return None
+    return insn.src if isinstance(insn.src, _STRUCT_INIT_TYPES) else None
+
+
+def get_hlil_instruction_addresses(insn):
+    """
+    Return the set of addresses covered by an instruction.
+
+    A structure initializer is emitted at the address of the last of the field
+    writes it folds, but its fields retain the addresses of the individual
+    writes, so all of them need to be considered when looking up an
+    instruction by address.
+    """
+    addresses = {insn.address}
+    struct_init = get_struct_init(insn)
+    if struct_init is not None:
+        addresses.update([field.address for field in struct_init.fields])
+    return addresses
+
+
+def get_struct_write_var(insn):
+    """
+    Return the variable whose struct insn declares or writes to, be it as a
+    declaration, as a single field assignment or as a structure initializer.
+    Returns None if insn does not declare or write to a struct variable.
+    """
+    if isinstance(insn, binja.HighLevelILVarDeclare):
+        return insn.var
+    if get_struct_init(insn) is not None:
+        if isinstance(insn, binja.HighLevelILVarInit):
+            return insn.dest
+        return insn.dest.var
+    if not isinstance(insn, binja.HighLevelILAssign):
+        return None
+    dest = insn.dest
+    if not isinstance(dest, binja.HighLevelILStructField):
+        return None
+    while isinstance(dest, (binja.HighLevelILStructField,
+                            binja.HighLevelILArrayIndex)):
+        dest = dest.src
+    if not isinstance(dest, binja.HighLevelILVar):
+        return None
+    return dest.var
+
+
+def make_struct_write_predicate(type_matches):
+    """
+    Build a predicate for x_reload_hlil_instruction that matches a declaration
+    of or write to a struct variable whose type name satisfies type_matches.
+    """
+    def predicate(insn):
+        var = get_struct_write_var(insn)
+        return var is not None and type_matches(str(var.type))
+    return predicate
+
+
+class StructInitFieldWrite:
+    """
+    Makes a field of a structure initializer look like an assignment to a
+    struct field, so that both representations can be consumed alike.
+    """
+
+    __slots__ = ('insn', 'dest', 'src', 'address', 'function')
+
+    def __init__(self, insn, field):
+        self.insn = insn
+        self.dest = field   # provides offset and member_index
+        self.src = field.src
+        self.address = field.address
+        self.function = insn.function
+
+
 def yield_struct_field_assign_hlil_instructions_for_var_id(hlil_func, var_id):
     """
     Find all HLIL instructions that assign to struct fields of
     a struct with a given variable identifier.
 
+    Fields of structure initializers are yielded as StructInitFieldWrite
+    adapters, which expose the same dest and src attributes as an assignment.
+
     Note that variable identifiers may change across type changes
     in the function.
     """
     for insn in hlil_func.instructions:
+        struct_init = get_struct_init(insn)
+        if struct_init is not None:
+            struct_var = get_struct_write_var(insn)
+            if struct_var is not None and struct_var.identifier == var_id:
+                for field in struct_init.fields:
+                    yield StructInitFieldWrite(insn, field)
+            continue
+
         if not isinstance(insn, binja.HighLevelILAssign):
             continue
         if not isinstance(insn.dest, binja.HighLevelILStructField):
