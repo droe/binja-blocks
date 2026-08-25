@@ -536,15 +536,13 @@ class BlockLiteral:
     @classmethod
     def from_stack(cls, bv, bl_insn, bl_var, sym_addrs):
         is_stack_block = True
+        bl_address = bl_insn.address
         bl_var.type = _parse_libclosure_type(bv, "struct Block_literal")
 
         bl_insn = bv.x_reload_hlil_instruction(bl_insn,
-                lambda insn: \
-                        isinstance(insn, binja.HighLevelILAssign) and \
-                        isinstance(insn.dest, binja.HighLevelILStructField) and \
-                        isinstance(insn.dest.src, binja.HighLevelILVar) and \
-                        str(insn.dest.src.var.type) == 'struct Block_literal')
-        stack_var_id = bl_insn.dest.src.var.identifier
+                shinobi.make_struct_write_predicate(
+                        lambda type_name: type_name == 'struct Block_literal'))
+        stack_var_id = shinobi.get_struct_write_var(bl_insn).identifier
 
         for insn in shinobi.yield_struct_field_assign_hlil_instructions_for_var_id(bl_insn.function, stack_var_id):
             if insn.dest.member_index == 0:
@@ -590,15 +588,17 @@ class BlockLiteral:
         if descriptor == 0:
             raise BlockLiteral.NotABlockLiteralError("descriptor is NULL")
 
-        return cls(bv, is_stack_block, bl_insn, isa, flags, reserved, invoke, descriptor)
+        return cls(bv, is_stack_block, bl_insn, isa, flags, reserved, invoke, descriptor,
+                   address=bl_address)
 
-    def __init__(self, bv, is_stack_block, insn_or_data_var, isa, flags, reserved, invoke, descriptor):
+    def __init__(self, bv, is_stack_block, insn_or_data_var, isa, flags, reserved, invoke, descriptor,
+                 address=None):
         self._bv = bv
         self.is_stack_block = is_stack_block
         if self.is_stack_block:
             self.insn = insn_or_data_var
             self.data_var = None
-            self.address = self.insn.address
+            self.address = self.insn.address if address is None else address
         else:
             self.insn = None
             self.data_var = insn_or_data_var
@@ -630,10 +630,8 @@ class BlockLiteral:
         Annotate the block literal.
         """
         if self.is_stack_block:
-            assert isinstance(self.insn, binja.HighLevelILAssign)
-            assert isinstance(self.insn.dest, binja.HighLevelILStructField)
-            assert isinstance(self.insn.dest.src, binja.HighLevelILVar)
-            stack_var = self.insn.dest.src.var
+            stack_var = shinobi.get_struct_write_var(self.insn)
+            assert stack_var is not None
             stack_var_type_name = str(stack_var.type)
             if stack_var_type_name.startswith("struct Block_literal_") and stack_var_type_name != bd.block_literal_struct.type_name:
                 # Stack var has already been annotated for initialization code
@@ -649,11 +647,8 @@ class BlockLiteral:
                 stack_var.name = f"stack_block_{stack_var.name}"
             stack_var.type = bd.block_literal_struct.type_name
             self.insn = self._bv.x_reload_hlil_instruction(self.insn,
-                    lambda insn: \
-                            isinstance(insn, binja.HighLevelILAssign) and \
-                            isinstance(insn.dest, binja.HighLevelILStructField) and \
-                            isinstance(insn.dest.src, binja.HighLevelILVar) and \
-                            str(insn.dest.src.var.type).startswith('struct Block_literal_'))
+                    shinobi.make_struct_write_predicate(
+                            lambda type_name: type_name.startswith('struct Block_literal_')))
         else:
             self.data_var.name = f"global_block_{self.address:x}"
             self.data_var.type = bd.block_literal_struct.type_name
@@ -719,7 +714,8 @@ class BlockLiteral:
             return byref_captures, self_captures
 
         byref_indexes_set = set(bd.byref_indexes)
-        for insn in shinobi.yield_struct_field_assign_hlil_instructions_for_var_id(self.insn.function, self.insn.dest.src.var.identifier):
+        stack_var_id = shinobi.get_struct_write_var(self.insn).identifier
+        for insn in shinobi.yield_struct_field_assign_hlil_instructions_for_var_id(self.insn.function, stack_var_id):
             if insn.dest.member_index is None:
                 # No field declared at offset insn.dest.offset.  We could try
                 # to create fields automatically here, but let's leave it to
@@ -1136,10 +1132,9 @@ class BlockByref:
 
         self.byref_insn_var.type = struct
         self.byref_insn = self._bv.x_reload_hlil_instruction(self.byref_insn,
-                lambda insn: \
-                        isinstance(insn, binja.HighLevelILVarDeclare) and \
-                        str(insn.var.type).startswith('struct'))
-        self.byref_insn_var = self.byref_insn.var
+                shinobi.make_struct_write_predicate(
+                        lambda type_name: type_name.startswith('struct')))
+        self.byref_insn_var = shinobi.get_struct_write_var(self.byref_insn)
 
         # XXX Detect when there are multiple assignments to the same member_index
         # in different branches and warn accordingly.
@@ -1177,10 +1172,9 @@ class BlockByref:
             layout_index = struct.index_by_name("layout")
             self.byref_insn_var.type = struct
             self.byref_insn = self._bv.x_reload_hlil_instruction(self.byref_insn,
-                    lambda insn: \
-                            isinstance(insn, binja.HighLevelILVarDeclare) and \
-                            str(insn.var.type).startswith('struct'))
-            self.byref_insn_var = self.byref_insn.var
+                    shinobi.make_struct_write_predicate(
+                            lambda type_name: type_name.startswith('struct')))
+            self.byref_insn_var = shinobi.get_struct_write_var(self.byref_insn)
             byref_layout = None
             for insn in shinobi.yield_struct_field_assign_hlil_instructions_for_var_id(self.byref_insn.function, self.byref_insn_var.identifier):
                 if insn.dest.member_index == layout_index:
@@ -1212,17 +1206,16 @@ class BlockByref:
         elif byref_layout_nibble == BLOCK_BYREF_LAYOUT_UNRETAINED:
             struct.append_with_offset_suffix(_parse_objc_type(bv, "id"), "unretained_ptr_")
 
-        self.byref_struct = GeneratedStruct(bv, struct, f"Block_byref_{self.byref_insn.address:x}")
+        self.byref_struct = GeneratedStruct(bv, struct, f"Block_byref_{self.address:x}")
 
         # propagate registered struct to forwarding self pointer
         self.byref_struct.update_member_type("forwarding", self.byref_struct.pointer_to_type)
 
         self.byref_insn_var.type = self.byref_struct.type
         self.byref_insn = self._bv.x_reload_hlil_instruction(self.byref_insn,
-                lambda insn: \
-                        isinstance(insn, binja.HighLevelILVarDeclare) and \
-                        str(insn.var.type).startswith('struct'))
-        self.byref_insn_var = self.byref_insn.var
+                shinobi.make_struct_write_predicate(
+                        lambda type_name: type_name.startswith('struct')))
+        self.byref_insn_var = shinobi.get_struct_write_var(self.byref_insn)
 
         # propagate byref type to block literal type
         # different block literals might propagate different byrefs to the struct type
@@ -1377,6 +1370,21 @@ def annotate_global_block_literal(bv, block_literal_addr, sym_addrs=None):
         return
 
 
+def _get_isa_src(insn):
+    """
+    Return the expression that a var init or assign writes to the isa field of
+    a block literal, that is, to the first field of the struct.  Returns None
+    if there is no such expression.
+    """
+    struct_init = shinobi.get_struct_init(insn)
+    if struct_init is None:
+        return insn.src
+    for field in struct_init.fields:
+        if field.offset == 0:
+            return field.src
+    return None
+
+
 def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
     where = f"Stack block {block_literal_insn.address:x}"
 
@@ -1401,7 +1409,16 @@ def annotate_stack_block_literal(bv, block_literal_insn, sym_addrs=None):
         bv.x_blocks_plugin_logger.log_warn(f"{where}: Address is not in any functions")
         return
 
-    if isinstance(block_literal_insn, binja.HighLevelILVarInit):
+    if shinobi.get_struct_init(block_literal_insn) is not None:
+        # Binja already gave the stack variable a struct type, so the writes to
+        # the literal are folded into a structure initializer and the
+        # initialization with __NSConcreteStackBlock is one of its fields.
+        block_literal_var = shinobi.get_struct_write_var(block_literal_insn)
+        isa_src = _get_isa_src(block_literal_insn)
+        if isa_src is None:
+            bv.x_blocks_plugin_logger.log_error(f"{where}: Structure initializer has no field at offset 0")
+            return
+    elif isinstance(block_literal_insn, binja.HighLevelILVarInit):
         # The most common case where Binja knows nothing about the stack
         # variable.  The initialization with __NSConcreteStackBlock is a
         # HighLevelILVarInit.
@@ -1588,10 +1605,11 @@ def annotate_all_stack_blocks(bv, set_progress=None):
             if not isinstance(insn, (binja.HighLevelILVarInit,
                                      binja.HighLevelILAssign)):
                 continue
-            if not isinstance(insn.src, (binja.HighLevelILImport,
-                                         binja.HighLevelILConstPtr)):
+            isa_src = _get_isa_src(insn)
+            if not isinstance(isa_src, (binja.HighLevelILImport,
+                                        binja.HighLevelILConstPtr)):
                 continue
-            if insn.src.constant not in sym_addrs:
+            if isa_src.constant not in sym_addrs:
                 continue
             if set_progress is not None:
                 set_progress(f"{insn.address:x}")
